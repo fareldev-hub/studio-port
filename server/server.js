@@ -72,6 +72,33 @@ function getClientIP(socket) {
   return socket.handshake.address || '127.0.0.1';
 }
 
+// Generate ThePort ASCII Art Banner
+function generateThePortBanner(clientIP) {
+  const C = '\x1b'; // ESC
+  const CYAN = `${C}[36m`;
+  const BLUE = `${C}[34m`;
+  const MAGENTA = `${C}[35m`;
+  const YELLOW = `${C}[33m`;
+  const GREEN = `${C}[32m`;
+  const RESET = `${C}[0m`;
+  const BOLD = `${C}[1m`;
+  const DIM = `${C}[2m`;
+
+  // Figlet-style ASCII art for "ThePort"
+  const asciiArt = [
+    `\n\n${CYAN}║${RESET}  ${BOLD}${BLUE}████████╗${RESET}${MAGENTA}██╗  ██╗${RESET}${YELLOW}███████╗${RESET}${GREEN}██████╗  ${RESET}${CYAN}██████╗ ${RESET}${MAGENTA}██████╗ ${RESET}${YELLOW}████████╗${RESET}  ${CYAN}║${RESET}`,
+    `${CYAN}║${RESET}  ${BOLD}${BLUE}╚══██╔══╝${RESET}${MAGENTA}██║  ██║${RESET}${YELLOW}██╔════╝${RESET}${GREEN}██╔══██╗${RESET}${CYAN}██╔═══██╗${RESET}${MAGENTA}██╔══██╗${RESET}${YELLOW}╚══██╔══╝${RESET}  ${CYAN}║${RESET}`,
+    `${CYAN}║${RESET}  ${BOLD}${BLUE}   ██║   ${RESET}${MAGENTA}███████║${RESET}${YELLOW}█████╗  ${RESET}${GREEN}██████╔╝${RESET}${CYAN}██║   ██║${RESET}${MAGENTA}██████╔╝${RESET}${YELLOW}   ██║   ${RESET}  ${CYAN}║${RESET}`,
+    `${CYAN}║${RESET}  ${BOLD}${BLUE}   ██║   ${RESET}${MAGENTA}██╔══██║${RESET}${YELLOW}██╔══╝  ${RESET}${GREEN}██╔═══╝ ${RESET}${CYAN}██║   ██║${RESET}${MAGENTA}██╔══██╗${RESET}${YELLOW}   ██║   ${RESET}  ${CYAN}║${RESET}`,
+    `${CYAN}║${RESET}  ${BOLD}${BLUE}   ██║   ${RESET}${MAGENTA}██║  ██║${RESET}${YELLOW}███████╗${RESET}${GREEN}██║     ${RESET}${CYAN}╚██████╔╝${RESET}${MAGENTA}██║  ██║${RESET}${YELLOW}   ██║   ${RESET}  ${CYAN}║${RESET}`,
+    `${CYAN}║${RESET}  ${BOLD}${BLUE}   ╚═╝   ${RESET}${MAGENTA}╚═╝  ╚═╝${RESET}${YELLOW}╚══════╝${RESET}${GREEN}╚═╝     ${RESET}${CYAN} ╚═════╝ ${RESET}${MAGENTA}╚═╝  ╚═╝${RESET}${YELLOW}   ╚═╝   ${RESET}  ${CYAN}║${RESET}`,
+    `\n\n${DIM}Welcome to ThePort Terminal • Connected: ${GREEN}${clientIP}${RESET}\nPress enter to start`,
+    ``
+  ];
+
+  return asciiArt.join('\r\n');
+}
+
 // Socket.IO connection handler
 io.on('connection', (socket) => {
   const clientIP = getClientIP(socket);
@@ -80,13 +107,11 @@ io.on('connection', (socket) => {
   // Initialize PTY for this socket
   if (pty) {
     try {
-      // Build the fancy ThePort prompt
-      // Using ANSI: \001 = \[ \002 = \] for non-printing chars in PS1
       const C = '\x1b'; // ESC
-      const CYAN  = `\x01${C}[36m\x02`;
+      const CYAN = `\x01${C}[36m\x02`;
       const RESET = `\x01${C}[0m\x02`;
-      const BOLD  = `\x01${C}[1m\x02`;
-      const DIM   = `\x01${C}[2m\x02`;
+      const BOLD = `\x01${C}[1m\x02`;
+      const DIM = `\x01${C}[2m\x02`;
 
       // PS1 line 1: ╭┈┈┈┈┈┈❀[ @ <ip> | ThePort ]
       // PS1 line 2: ╰─∘ \w :
@@ -108,6 +133,11 @@ io.on('connection', (socket) => {
       });
 
       ptyProcesses.set(socket.id, ptyProcess);
+
+      // Send ThePort banner immediately after connection
+      setTimeout(() => {
+        socket.emit('terminal:data', generateThePortBanner(clientIP));
+      }, 100);
 
       // Forward PTY output to socket
       ptyProcess.onData((data) => {
@@ -137,12 +167,14 @@ io.on('connection', (socket) => {
         }
       });
 
-      // Send initial connection success
+      // Send initial connection success - TANPA PESAN TERMINAL
+      // Hanya kirim data koneksi, tidak ada pesan yang ditampilkan di terminal
       socket.emit('terminal:connected', {
         shell: SHELL,
         platform: process.platform,
         hostname: os.hostname(),
         username: os.userInfo().username,
+        silent: true // Flag untuk frontend agar tidak menampilkan pesan
       });
 
       console.log(`[PTY] Spawned ${SHELL} for socket ${socket.id}`);
@@ -159,11 +191,14 @@ io.on('connection', (socket) => {
       hostname: os.hostname(),
       username: os.userInfo().username,
       mock: true,
+      silent: true
     });
 
-    // Send welcome message
+    // Send welcome message with ThePort banner
     setTimeout(() => {
-      socket.emit('terminal:data', 
+      const banner = generateThePortBanner('127.0.0.1');
+      socket.emit('terminal:data',
+        banner +
         '\r\n\x1b[36m╔══════════════════════════════════════════════════════════╗\x1b[0m\r\n' +
         '\x1b[36m║\x1b[0m  \x1b[1mCodeStudio Terminal (Mock Mode)\x1b[0m                       \x1b[36m║\x1b[0m\r\n' +
         '\x1b[36m║\x1b[0m  \x1b[33mnode-pty is not installed. Limited functionality.\x1b[0m    \x1b[36m║\x1b[0m\r\n' +
@@ -215,13 +250,13 @@ function handleMockCommand(socket, cmd) {
     socket.emit('terminal:data', '\x1b[32mcodestudio\x1b[0m:\x1b[34m~\x1b[0m$ ');
     return;
   }
-  
+
   const args = cmd.split(' ');
   const command = args[0].toLowerCase();
-  
+
   switch (command) {
     case 'help':
-      socket.emit('terminal:data', 
+      socket.emit('terminal:data',
         '  \x1b[33mAvailable commands:\x1b[0m\r\n' +
         '    help     - Show this help message\r\n' +
         '    clear    - Clear the terminal\r\n' +
@@ -268,7 +303,7 @@ function handleMockCommand(socket, cmd) {
       socket.emit('terminal:data', `  \x1b[31mCommand not found: ${command}\x1b[0m\r\n`);
       socket.emit('terminal:data', `  Type '\x1b[33mhelp\x1b[0m' for available commands\r\n`);
   }
-  
+
   socket.emit('terminal:data', '\x1b[32mcodestudio\x1b[0m:\x1b[34m~\x1b[0m$ ');
 }
 

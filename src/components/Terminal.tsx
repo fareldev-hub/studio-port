@@ -7,18 +7,30 @@ interface TerminalProps {
   onClose: () => void;
   onToggle: () => void;
   onConnectionChange?: (connected: boolean) => void;
+  isExpanded?: boolean;
 }
 
-export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProps) {
+export function Terminal({ onClose, onToggle, onConnectionChange, isExpanded: externalIsExpanded }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const hasReceivedBannerRef = useRef<boolean>(false);
+  
+  const [isExpanded, setIsExpanded] = useState(externalIsExpanded || false);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (externalIsExpanded !== undefined) {
+      setIsExpanded(externalIsExpanded);
+    }
+  }, [externalIsExpanded]);
 
   const updateConnection = useCallback((connected: boolean) => {
     setIsConnected(connected);
@@ -26,10 +38,28 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
     setConnectionStatus(connected ? 'connected' : 'offline');
   }, [onConnectionChange]);
 
+  const resizeTerminal = useCallback(() => {
+    if (!fitAddonRef.current || !xtermRef.current || !containerRef.current) return;
+    
+    try {
+      fitAddonRef.current.fit();
+      const dims = fitAddonRef.current.proposeDimensions();
+      if (dims && socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(`42["terminal:resize",${JSON.stringify({ cols: dims.cols, rows: dims.rows })}]`);
+      }
+      
+      const rect = containerRef.current.getBoundingClientRect();
+      setDimensions({ width: Math.round(rect.width), height: Math.round(rect.height) });
+    } catch (err) {
+      console.warn('[Terminal] Resize error:', err);
+    }
+  }, []);
+
   const connectToBackend = useCallback((term: XTerm, fitAddon: FitAddon) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) return;
 
     setConnectionStatus('connecting');
+    hasReceivedBannerRef.current = false;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -72,6 +102,8 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
             socket.send('3');
           }
         }, 25000);
+        
+        setTimeout(resizeTerminal, 100);
         return;
       }
 
@@ -81,14 +113,23 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
           const [eventName, payload] = JSON.parse(jsonStr);
 
           if (eventName === 'terminal:data' && typeof payload === 'string') {
+            // Cek apakah ini banner ThePort (mengandung karakteristik logo)
+            if (payload.includes('████████╗') || payload.includes('ThePort')) {
+              hasReceivedBannerRef.current = true;
+            }
             term.write(payload);
           } else if (eventName === 'terminal:connected') {
             updateConnection(true);
-            term.clear();
-            const shellName = payload?.shell || 'bash';
-            const isPty = !payload?.mock;
-            term.writeln(`\x1b[32m[Connected]\x1b[0m Real Linux terminal via \x1b[36m${shellName}\x1b[0m ${isPty ? '(PTY)' : '(mock)'}`);
-            term.writeln('');
+            // TAMBAHAN: Jangan tampilkan pesan "[Connected]..." jika sudah ada banner
+            // atau jika payload.silent === true
+            if (!payload?.silent && !hasReceivedBannerRef.current) {
+              term.clear();
+              const shellName = payload?.shell || 'bash';
+              const isPty = !payload?.mock;
+              term.writeln(`\x1b[32m[Connected]\x1b[0m Real Linux terminal via \x1b[36m${shellName}\x1b[0m ${isPty ? '(PTY)' : '(mock)'}`);
+              term.writeln('');
+            }
+            // Jika silent atau sudah ada banner, tidak perlu tampilkan apa-apa
           } else if (eventName === 'terminal:error') {
             term.writeln(`\r\n\x1b[31m[Error] ${payload?.message || 'Unknown error'}\x1b[0m\r\n`);
           } else if (eventName === 'terminal:exit') {
@@ -103,6 +144,7 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
     socket.onclose = () => {
       console.log('[Terminal] WebSocket closed');
       updateConnection(false);
+      hasReceivedBannerRef.current = false;
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
 
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
@@ -124,21 +166,8 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
       }
     });
 
-    const handleResize = () => {
-      fitAddon.fit();
-      if (socket.readyState === WebSocket.OPEN) {
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          socket.send(`42["terminal:resize",${JSON.stringify({ cols: dims.cols, rows: dims.rows })}]`);
-        }
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [updateConnection]);
+    return () => {};
+  }, [updateConnection, resizeTerminal]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -174,6 +203,8 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
       scrollback: 10000,
       convertEol: true,
       allowTransparency: false,
+      rows: 24,
+      cols: 80,
     });
 
     const fitAddon = new FitAddon();
@@ -184,10 +215,34 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const cleanup = connectToBackend(term, fitAddon);
+    if (containerRef.current && 'ResizeObserver' in window) {
+      resizeObserverRef.current = new ResizeObserver((entries) => {
+        window.requestAnimationFrame(() => {
+          if (entries.length > 0) {
+            resizeTerminal();
+          }
+        });
+      });
+      resizeObserverRef.current.observe(containerRef.current);
+    }
+
+    const handleWindowResize = () => {
+      resizeTerminal();
+    };
+    window.addEventListener('resize', handleWindowResize);
+
+    connectToBackend(term, fitAddon);
+
+    const initialResizeTimer = setTimeout(() => {
+      resizeTerminal();
+    }, 100);
 
     return () => {
-      cleanup?.();
+      clearTimeout(initialResizeTimer);
+      window.removeEventListener('resize', handleWindowResize);
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+      }
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
       if (socketRef.current) {
@@ -198,20 +253,41 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
     };
   }, []);
 
+  useEffect(() => {
+    if (xtermRef.current && fitAddonRef.current) {
+      const timer = setTimeout(() => {
+        resizeTerminal();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [isExpanded, resizeTerminal]);
+
+  const handleToggle = () => {
+    const newExpanded = !isExpanded;
+    setIsExpanded(newExpanded);
+    onToggle();
+  };
+
   return (
-    <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-terminal)' }}>
-      {/* Terminal Header - Linux window bar style */}
+    <div 
+      ref={containerRef}
+      className="flex flex-col w-full h-full min-h-0" 
+      style={{ 
+        backgroundColor: 'var(--bg-terminal)',
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+    >
       <div
         className="flex items-center justify-between px-3 flex-shrink-0"
         style={{
           height: 32,
           background: 'linear-gradient(180deg, #1a1a1a 0%, #141414 100%)',
           borderBottom: '1px solid #2a2a2a',
+          flexShrink: 0,
         }}
       >
-        {/* Left: traffic lights + label */}
         <div className="flex items-center gap-2">
-          {/* macOS-style dots for aesthetic */}
           <div className="flex items-center gap-1.5 mr-1">
             <span className="inline-block rounded-full" style={{ width: 10, height: 10, backgroundColor: '#f44747', opacity: 0.8 }} />
             <span className="inline-block rounded-full" style={{ width: 10, height: 10, backgroundColor: '#dcdcaa', opacity: 0.8 }} />
@@ -228,7 +304,6 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
             bash — ThePort Studio
           </span>
 
-          {/* Status badge */}
           {connectionStatus === 'connected' && (
             <span
               className="flex items-center gap-1 px-1.5 py-0.5 rounded"
@@ -259,33 +334,73 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
           )}
         </div>
 
-        {/* Right: actions */}
         <div className="flex items-center gap-0.5">
           <ActionButton icon="fa-trash-can" title="Clear terminal" onClick={() => xtermRef.current?.clear()} />
           <ActionButton
             icon={isExpanded ? 'fa-chevron-down' : 'fa-chevron-up'}
-            title="Toggle size"
-            onClick={() => { setIsExpanded(!isExpanded); onToggle(); }}
+            title={isExpanded ? "Minimize" : "Maximize"}
+            onClick={handleToggle}
           />
           <ActionButton icon="fa-xmark" title="Close terminal" onClick={onClose} />
         </div>
       </div>
 
-      {/* Offline banner */}
       {connectionStatus === 'offline' && (
         <div
           className="flex items-center justify-center gap-1.5 py-1 flex-shrink-0"
-          style={{ backgroundColor: 'rgba(244, 71, 71, 0.08)', borderBottom: '1px solid rgba(244,71,71,0.2)' }}
+          style={{ 
+            backgroundColor: 'rgba(244, 71, 71, 0.08)', 
+            borderBottom: '1px solid rgba(244,71,71,0.2)',
+            flexShrink: 0,
+          }}
         >
           <i className="fa-solid fa-circle-xmark" style={{ color: 'var(--accent-red)', fontSize: 10 }} />
           <span className="text-xs" style={{ color: 'var(--accent-red)' }}>Backend offline — reconnecting in 3s…</span>
         </div>
       )}
 
-      {/* Terminal Body */}
-      <div className="flex-1 relative overflow-hidden">
-        <div ref={terminalRef} className="absolute inset-0 p-2" />
+      <div 
+        className="flex-1 relative min-h-0" 
+        style={{ 
+          position: 'relative',
+          overflow: 'hidden',
+          paddingBottom: '12px',
+        }}
+      >
+        <div 
+          ref={terminalRef} 
+          className="absolute inset-0"
+          style={{
+            padding: '8px',
+            paddingBottom: '20px',
+            width: '100%',
+            height: '100%',
+          }}
+        />
       </div>
+      
+      <div 
+        className="flex-shrink-0"
+        style={{
+          height: '8px',
+          backgroundColor: 'var(--bg-terminal)',
+          borderTop: '1px solid #1a1a1a',
+        }}
+      />
+      
+      {process.env.NODE_ENV === 'development' && (
+        <div 
+          className="flex-shrink-0 px-2 py-1 text-xs"
+          style={{ 
+            backgroundColor: '#1a1a1a', 
+            borderTop: '1px solid #2a2a2a',
+            color: '#666',
+            fontFamily: 'monospace'
+          }}
+        >
+          {dimensions.width}x{dimensions.height}px | {isExpanded ? 'Expanded' : 'Normal'}
+        </div>
+      )}
     </div>
   );
 }
