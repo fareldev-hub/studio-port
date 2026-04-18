@@ -49,18 +49,18 @@ export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggle
       </div>
 
       {/* Right Section */}
-      <div className="flex items-center gap-3">
-        {/* Terminal Status */}
+      <div className="flex items-center gap-2">
+        {/* Terminal Status dot (always visible) + label (hidden on small screens) */}
         <div className="flex items-center gap-1.5">
           <span
-            className="inline-block rounded-full"
+            className="inline-block rounded-full flex-shrink-0"
             style={{
               width: 8,
               height: 8,
               backgroundColor: terminalConnected ? 'var(--status-connected)' : 'var(--status-disconnected)',
             }}
           />
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-xs hidden sm:inline" style={{ color: 'var(--text-muted)' }}>
             {terminalConnected ? 'Terminal Ready' : 'Terminal Offline'}
           </span>
         </div>

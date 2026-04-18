@@ -25,8 +25,8 @@ export function StatusBar({ cursorLine, cursorCol, language, fileName, isDirty, 
               <i className="fa-solid fa-code-branch" style={{ fontSize: 10 }} />
               main
             </span>
-            <span style={{ fontSize: 11 }}>UTF-8</span>
-            <span style={{ fontSize: 11 }}>LF</span>
+            <span className="hidden sm:inline" style={{ fontSize: 11 }}>UTF-8</span>
+            <span className="hidden sm:inline" style={{ fontSize: 11 }}>LF</span>
           </>
         )}
       </div>
@@ -41,7 +41,7 @@ export function StatusBar({ cursorLine, cursorCol, language, fileName, isDirty, 
         {isDirty && (
           <span style={{ fontSize: 11 }}>
             <i className="fa-solid fa-circle" style={{ fontSize: 6 }} />
-            Modified
+            <span className="hidden sm:inline ml-1">Modified</span>
           </span>
         )}
       </div>
@@ -53,7 +53,7 @@ export function StatusBar({ cursorLine, cursorCol, language, fileName, isDirty, 
             Ln {cursorLine}, Col {cursorCol}
           </span>
         )}
-        <span style={{ fontSize: 11 }}>Spaces: 2</span>
+        <span className="hidden sm:inline" style={{ fontSize: 11 }}>Spaces: 2</span>
       </div>
     </div>
   );

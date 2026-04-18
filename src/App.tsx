@@ -14,9 +14,23 @@ import type { FileSystemEntry, OpenTab, ContextMenuItem } from '@/types';
 import { getLanguageFromFilename } from '@/lib/fileIcons';
 import './App.css';
 
+type MobilePanel = 'explorer' | 'editor' | 'terminal';
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
 export default function App() {
   const fs = useFileSystem();
   const toast = useToast();
+  const isMobile = useIsMobile();
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -31,6 +45,9 @@ export default function App() {
   const [deleteModal, setDeleteModal] = useState<{ entry: FileSystemEntry } | null>(null);
   const [renamingEntry, setRenamingEntry] = useState<{ entry: FileSystemEntry; newName: string } | null>(null);
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
+  const [terminalConnected, setTerminalConnected] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>('editor');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   const sidebarResizeRef = useRef<{ isResizing: boolean; startX: number; startWidth: number }>({
     isResizing: false,
@@ -69,7 +86,8 @@ export default function App() {
             break;
           case 'b':
             e.preventDefault();
-            setSidebarVisible((v) => !v);
+            if (isMobile) setMobileSidebarOpen((v) => !v);
+            else setSidebarVisible((v) => !v);
             break;
           case '`':
           case '÷':
@@ -92,17 +110,21 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTabId, selectedEntry, fs.rootEntry]);
+  }, [activeTabId, selectedEntry, fs.rootEntry, isMobile]);
 
   const handleOpenFolder = useCallback(async () => {
     const result = await fs.openFolder();
     if (result.success) {
       toast.showPermissionGranted(result.name || 'Unknown Folder');
       setExpandedDirs(new Set());
+      if (isMobile) {
+        setMobileSidebarOpen(false);
+        setMobilePanel('editor');
+      }
     } else if (result.reason === 'denied') {
       toast.showPermissionDenied(() => handleOpenFolder());
     }
-  }, [fs, toast]);
+  }, [fs, toast, isMobile]);
 
   const handleFileClick = useCallback(
     async (entry: FileSystemEntry) => {
@@ -112,6 +134,7 @@ export default function App() {
       const existingTab = tabs.find((t) => t.path === entry.path);
       if (existingTab) {
         setActiveTabId(existingTab.id);
+        if (isMobile) { setMobileSidebarOpen(false); setMobilePanel('editor'); }
         return;
       }
 
@@ -129,8 +152,9 @@ export default function App() {
 
       setTabs((prev) => prev.map((t) => ({ ...t, isActive: false })).concat(newTab));
       setActiveTabId(newTab.id);
+      if (isMobile) { setMobileSidebarOpen(false); setMobilePanel('editor'); }
     },
-    [fs, tabs]
+    [fs, tabs, isMobile]
   );
 
   const handleFolderToggle = useCallback(
@@ -148,7 +172,6 @@ export default function App() {
       newExpanded.add(entry.path);
       setExpandedDirs(newExpanded);
 
-      // Load children
       const children = await fs.expandDirectory(entry);
       const updateEntryChildren = (entries: FileSystemEntry[]): FileSystemEntry[] => {
         return entries.map((e) => {
@@ -182,16 +205,12 @@ export default function App() {
 
   const handleTabClick = useCallback((tabId: string) => {
     setActiveTabId(tabId);
-    setTabs((prev) =>
-      prev.map((t) => ({ ...t, isActive: t.id === tabId }))
-    );
+    setTabs((prev) => prev.map((t) => ({ ...t, isActive: t.id === tabId })));
   }, []);
 
   const handleEditorChange = useCallback((tabId: string, value: string) => {
     setTabs((prev) =>
-      prev.map((t) =>
-        t.id === tabId ? { ...t, content: value, isDirty: true } : t
-      )
+      prev.map((t) => (t.id === tabId ? { ...t, content: value, isDirty: true } : t))
     );
   }, []);
 
@@ -202,9 +221,7 @@ export default function App() {
 
     const success = await fs.writeFile(tab.handle, tab.content);
     if (success) {
-      setTabs((prev) =>
-        prev.map((t) => (t.id === activeTabId ? { ...t, isDirty: false } : t))
-      );
+      setTabs((prev) => prev.map((t) => (t.id === activeTabId ? { ...t, isDirty: false } : t)));
       toast.showFileSaved(tab.name);
     } else {
       toast.showError('Failed to save file. Check permissions.');
@@ -246,7 +263,6 @@ export default function App() {
     const success = await fs.deleteEntry(entry.parentHandle, entry.name);
     if (success) {
       toast.showInfo('Deleted', `"${entry.name}" has been deleted.`);
-      // Close tab if open
       const tab = tabs.find((t) => t.path === entry.path);
       if (tab) closeTab(tab.id);
       await fs.refreshEntries();
@@ -264,7 +280,6 @@ export default function App() {
       const success = await fs.renameEntry(parentHandle, entry.name, newName, entry);
       if (success) {
         toast.showInfo('Renamed', `"${entry.name}" renamed to "${newName}".`);
-        // Update tab if open
         const tab = tabs.find((t) => t.path === entry.path);
         if (tab) {
           setTabs((prev) =>
@@ -284,14 +299,14 @@ export default function App() {
     [renamingEntry, fs, toast, tabs]
   );
 
-  // Sidebar resize handlers
+  // Sidebar resize
   const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
     sidebarResizeRef.current = { isResizing: true, startX: e.clientX, startWidth: sidebarWidth };
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, [sidebarWidth]);
 
-  // Terminal resize handlers
+  // Terminal resize
   const handleTerminalResizeStart = useCallback((e: React.MouseEvent) => {
     terminalResizeRef.current = { isResizing: true, startY: e.clientY, startHeight: terminalHeight };
     document.body.style.cursor = 'row-resize';
@@ -327,7 +342,6 @@ export default function App() {
     };
   }, []);
 
-  // Handle right-click context menu
   const handleEntryContextMenu = useCallback(
     (e: React.MouseEvent, entry: FileSystemEntry) => {
       e.preventDefault();
@@ -373,86 +387,171 @@ export default function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
+  const fileExplorer = (
+    <FileExplorer
+      rootName={fs.rootEntry?.name}
+      entries={fs.entries}
+      expandedDirs={expandedDirs}
+      selectedPath={selectedEntry?.path}
+      activeFilePath={activeTab?.path}
+      renamingEntry={renamingEntry}
+      onFileClick={handleFileClick}
+      onFolderToggle={handleFolderToggle}
+      onContextMenu={handleEntryContextMenu}
+      onOpenFolder={handleOpenFolder}
+      onNewFile={() =>
+        fs.rootEntry?.handle &&
+        setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })
+      }
+      onNewFolder={() =>
+        fs.rootEntry?.handle &&
+        setNewItemModal({ type: 'folder', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })
+      }
+      onRefresh={fs.refreshEntries}
+      onRenameSubmit={handleRenameEntry}
+      onRenameCancel={() => setRenamingEntry(null)}
+    />
+  );
+
+  const terminalPanel = (
+    <Terminal
+      onClose={() => {
+        if (isMobile) setMobilePanel('editor');
+        else setTerminalVisible(false);
+      }}
+      onToggle={() => setTerminalHeight((h) => (h > 250 ? 150 : 300))}
+      onConnectionChange={setTerminalConnected}
+    />
+  );
+
+  const editorArea = (
+    <Editor
+      tabs={tabs}
+      activeTabId={activeTabId}
+      onTabClick={handleTabClick}
+      onTabClose={closeTab}
+      onEditorChange={handleEditorChange}
+      onCursorPositionChange={setCursorPos}
+      onNewFile={() =>
+        fs.rootEntry?.handle &&
+        setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })
+      }
+    />
+  );
+
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)' }}>
       {/* Title Bar */}
       <TitleBar
         folderName={fs.rootEntry?.name}
-        terminalConnected={false}
+        terminalConnected={terminalConnected}
         onOpenFolder={handleOpenFolder}
-        onToggleSidebar={() => setSidebarVisible((v) => !v)}
+        onToggleSidebar={() => {
+          if (isMobile) setMobileSidebarOpen((v) => !v);
+          else setSidebarVisible((v) => !v);
+        }}
       />
 
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        {sidebarVisible && (
-          <>
-            <div style={{ width: sidebarWidth, minWidth: sidebarWidth }} className="flex-shrink-0">
-              <FileExplorer
-                rootName={fs.rootEntry?.name}
-                entries={fs.entries}
-                expandedDirs={expandedDirs}
-                selectedPath={selectedEntry?.path}
-                activeFilePath={activeTab?.path}
-                renamingEntry={renamingEntry}
-                onFileClick={handleFileClick}
-                onFolderToggle={handleFolderToggle}
-                onContextMenu={handleEntryContextMenu}
-                onOpenFolder={handleOpenFolder}
-                onNewFile={() =>
-                  fs.rootEntry?.handle &&
-                  setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })
-                }
-                onNewFolder={() =>
-                  fs.rootEntry?.handle &&
-                  setNewItemModal({ type: 'folder', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })
-                }
-                onRefresh={fs.refreshEntries}
-                onRenameSubmit={handleRenameEntry}
-                onRenameCancel={() => setRenamingEntry(null)}
+      {/* ── MOBILE LAYOUT ── */}
+      {isMobile ? (
+        <>
+          {/* Mobile: Sidebar overlay */}
+          {mobileSidebarOpen && (
+            <div className="fixed inset-0 z-50 flex" style={{ top: 38 }}>
+              <div
+                className="flex-1 overflow-hidden"
+                style={{ backgroundColor: 'var(--bg-sidebar)', maxWidth: '80vw' }}
+              >
+                {fileExplorer}
+              </div>
+              <div
+                className="flex-1"
+                style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+                onClick={() => setMobileSidebarOpen(false)}
               />
             </div>
-            {/* Sidebar Resize Handle */}
-            <div
-              className="w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-500/30 transition-colors"
-              style={{ backgroundColor: 'var(--border-primary)' }}
-              onMouseDown={handleSidebarResizeStart}
-            />
-          </>
-        )}
+          )}
 
-        {/* Editor Area */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <Editor
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onTabClick={handleTabClick}
-            onTabClose={closeTab}
-            onEditorChange={handleEditorChange}
-            onCursorPositionChange={setCursorPos}
-            onNewFile={() =>
-              fs.rootEntry?.handle &&
-              setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })
-            }
-          />
-
-          {/* Terminal Panel */}
-          {terminalVisible && (
-            <>
-              {/* Terminal Resize Handle */}
-              <div
-                className="h-1 flex-shrink-0 cursor-row-resize hover:bg-blue-500/30 transition-colors"
-                style={{ backgroundColor: 'var(--border-primary)' }}
-                onMouseDown={handleTerminalResizeStart}
-              />
-              <div style={{ height: terminalHeight, minHeight: 100 }} className="flex-shrink-0">
-                <Terminal onClose={() => setTerminalVisible(false)} onToggle={() => setTerminalHeight((h) => (h > 250 ? 150 : 300))} />
+          {/* Mobile: Active panel */}
+          <div className="flex-1 overflow-hidden">
+            {mobilePanel === 'explorer' && fileExplorer}
+            {mobilePanel === 'editor' && (
+              <div className="flex flex-col h-full">
+                <div className="flex-1 overflow-hidden">{editorArea}</div>
               </div>
+            )}
+            {mobilePanel === 'terminal' && (
+              <div className="h-full">{terminalPanel}</div>
+            )}
+          </div>
+
+          {/* Mobile: Bottom Navigation */}
+          <div
+            className="flex items-center justify-around flex-shrink-0"
+            style={{
+              height: 52,
+              backgroundColor: 'var(--bg-titlebar)',
+              borderTop: '1px solid var(--border-primary)',
+            }}
+          >
+            <MobileNavButton
+              icon="fa-folder-tree"
+              label="Explorer"
+              active={mobilePanel === 'explorer'}
+              onClick={() => setMobilePanel('explorer')}
+            />
+            <MobileNavButton
+              icon="fa-code"
+              label="Editor"
+              active={mobilePanel === 'editor'}
+              badge={tabs.filter((t) => t.isDirty).length > 0 ? '●' : undefined}
+              onClick={() => setMobilePanel('editor')}
+            />
+            <MobileNavButton
+              icon="fa-terminal"
+              label="Terminal"
+              active={mobilePanel === 'terminal'}
+              dot={terminalConnected}
+              onClick={() => setMobilePanel('terminal')}
+            />
+          </div>
+        </>
+      ) : (
+        /* ── DESKTOP LAYOUT ── */
+        <div className="flex flex-1 overflow-hidden">
+          {/* Sidebar */}
+          {sidebarVisible && (
+            <>
+              <div style={{ width: sidebarWidth, minWidth: sidebarWidth }} className="flex-shrink-0">
+                {fileExplorer}
+              </div>
+              <div
+                className="w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-500/30 transition-colors"
+                style={{ backgroundColor: 'var(--border-primary)' }}
+                onMouseDown={handleSidebarResizeStart}
+              />
             </>
           )}
+
+          {/* Editor + Terminal */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {editorArea}
+
+            {terminalVisible && (
+              <>
+                <div
+                  className="h-1 flex-shrink-0 cursor-row-resize hover:bg-blue-500/30 transition-colors"
+                  style={{ backgroundColor: 'var(--border-primary)' }}
+                  onMouseDown={handleTerminalResizeStart}
+                />
+                <div style={{ height: terminalHeight, minHeight: 100 }} className="flex-shrink-0">
+                  {terminalPanel}
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Status Bar */}
       <StatusBar
@@ -464,10 +563,9 @@ export default function App() {
         hasFolder={!!fs.rootEntry}
       />
 
-      {/* Toast Notifications */}
+      {/* Overlays */}
       <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
 
-      {/* Context Menu */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -477,7 +575,6 @@ export default function App() {
         />
       )}
 
-      {/* Modals */}
       {newItemModal && (
         <NewItemModal
           type={newItemModal.type}
@@ -493,5 +590,50 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+function MobileNavButton({
+  icon,
+  label,
+  active,
+  onClick,
+  badge,
+  dot,
+}: {
+  icon: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  badge?: string;
+  dot?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col items-center justify-center gap-0.5 px-4 py-1 rounded-lg transition-colors relative"
+      style={{
+        color: active ? 'var(--accent-blue)' : 'var(--text-muted)',
+        backgroundColor: active ? 'var(--bg-active)' : 'transparent',
+        minWidth: 64,
+      }}
+    >
+      <i className={`fa-solid ${icon}`} style={{ fontSize: 18 }} />
+      <span style={{ fontSize: 10, fontWeight: active ? 600 : 400 }}>{label}</span>
+      {badge && (
+        <span
+          className="absolute top-1 right-2"
+          style={{ color: 'var(--accent-yellow)', fontSize: 8 }}
+        >
+          {badge}
+        </span>
+      )}
+      {dot && (
+        <span
+          className="absolute top-1 right-1 rounded-full"
+          style={{ width: 6, height: 6, backgroundColor: 'var(--accent-green)' }}
+        />
+      )}
+    </button>
   );
 }

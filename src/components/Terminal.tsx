@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -6,16 +6,139 @@ import '@xterm/xterm/css/xterm.css';
 interface TerminalProps {
   onClose: () => void;
   onToggle: () => void;
+  onConnectionChange?: (connected: boolean) => void;
 }
 
-export function Terminal({ onClose, onToggle }: TerminalProps) {
+export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [showOffline, setShowOffline] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
+
+  const updateConnection = useCallback((connected: boolean) => {
+    setIsConnected(connected);
+    onConnectionChange?.(connected);
+    setConnectionStatus(connected ? 'connected' : 'offline');
+  }, [onConnectionChange]);
+
+  const connectToBackend = useCallback((term: XTerm, fitAddon: FitAddon) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) return;
+
+    setConnectionStatus('connecting');
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/socket.io/?EIO=4&transport=websocket`;
+
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(wsUrl);
+    } catch {
+      updateConnection(false);
+      return;
+    }
+
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      console.log('[Terminal] WebSocket opened, waiting for Engine.IO handshake');
+    };
+
+    socket.onmessage = (event) => {
+      const data = event.data as string;
+
+      if (data === '2') {
+        socket.send('3');
+        return;
+      }
+
+      if (data.startsWith('0')) {
+        socket.send('40');
+        return;
+      }
+
+      if (data.startsWith('40')) {
+        console.log('[Terminal] Socket.IO connected to backend');
+        updateConnection(true);
+
+        if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send('3');
+          }
+        }, 25000);
+        return;
+      }
+
+      if (data.startsWith('42')) {
+        try {
+          const jsonStr = data.slice(2);
+          const [eventName, payload] = JSON.parse(jsonStr);
+
+          if (eventName === 'terminal:data' && typeof payload === 'string') {
+            term.write(payload);
+          } else if (eventName === 'terminal:connected') {
+            updateConnection(true);
+            term.clear();
+            const shellName = payload?.shell || 'bash';
+            const isPty = !payload?.mock;
+            term.writeln(`\x1b[32m[Connected]\x1b[0m Real Linux terminal via \x1b[36m${shellName}\x1b[0m ${isPty ? '(PTY)' : '(mock)'}`);
+            term.writeln('');
+          } else if (eventName === 'terminal:error') {
+            term.writeln(`\r\n\x1b[31m[Error] ${payload?.message || 'Unknown error'}\x1b[0m\r\n`);
+          } else if (eventName === 'terminal:exit') {
+            term.writeln(`\r\n\x1b[33m[Process exited]\x1b[0m`);
+          }
+        } catch {
+          // ignore malformed
+        }
+      }
+    };
+
+    socket.onclose = () => {
+      console.log('[Terminal] WebSocket closed');
+      updateConnection(false);
+      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = setTimeout(() => {
+        if (xtermRef.current && fitAddonRef.current) {
+          term.writeln('\r\n\x1b[33m[Reconnecting...]\x1b[0m');
+          connectToBackend(term, fitAddonRef.current);
+        }
+      }, 3000);
+    };
+
+    socket.onerror = () => {
+      updateConnection(false);
+    };
+
+    term.onData((inputData) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(`42["terminal:input",${JSON.stringify(inputData)}]`);
+      }
+    });
+
+    const handleResize = () => {
+      fitAddon.fit();
+      if (socket.readyState === WebSocket.OPEN) {
+        const dims = fitAddon.proposeDimensions();
+        if (dims) {
+          socket.send(`42["terminal:resize",${JSON.stringify({ cols: dims.cols, rows: dims.rows })}]`);
+        }
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [updateConnection]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -44,7 +167,7 @@ export function Terminal({ onClose, onToggle }: TerminalProps) {
         brightCyan: '#4ec9b0',
         brightWhite: '#ffffff',
       },
-      fontFamily: "'JetBrains Mono', monospace",
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace",
       fontSize: 13,
       cursorBlink: true,
       cursorStyle: 'block',
@@ -55,203 +178,25 @@ export function Terminal({ onClose, onToggle }: TerminalProps) {
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-
     term.open(terminalRef.current);
     fitAddon.fit();
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Try to connect to Express backend via WebSocket
-    const connectToBackend = () => {
-      try {
-        // Detect if we're running on the same origin or need to connect elsewhere
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.host; // Will work when served by Express
-        const wsUrl = `${protocol}//${host}/socket.io/?EIO=4&transport=websocket`;
-
-        const socket = new WebSocket(wsUrl);
-        socketRef.current = socket;
-
-        socket.onopen = () => {
-          console.log('[Terminal] Connected to Express backend');
-          setIsConnected(true);
-          setShowOffline(false);
-        };
-
-        socket.onmessage = (event) => {
-          try {
-            // Socket.IO messages start with a number
-            const data = event.data;
-            if (typeof data === 'string' && data.startsWith('42')) {
-              // Engine.IO packet type 4 = message, 2 = event
-              const jsonStr = data.slice(2);
-              const [eventName, payload] = JSON.parse(jsonStr);
-
-              if (eventName === 'terminal:data' && typeof payload === 'string') {
-                term.write(payload);
-              } else if (eventName === 'terminal:connected') {
-                setIsConnected(true);
-                setShowOffline(false);
-                // Clear the initial offline message
-                term.clear();
-              } else if (eventName === 'terminal:error') {
-                term.writeln(`\r\n\x1b[31m[Error] ${payload.message}\x1b[0m\r\n`);
-              }
-            }
-          } catch {
-            // Ignore non-JSON messages
-          }
-        };
-
-        socket.onclose = () => {
-          console.log('[Terminal] Disconnected from backend');
-          setIsConnected(false);
-          // Show offline message after a delay
-          setTimeout(() => setShowOffline(true), 1000);
-        };
-
-        socket.onerror = () => {
-          setIsConnected(false);
-        };
-
-        // Handle terminal input
-        term.onData((data) => {
-          if (socket.readyState === WebSocket.OPEN) {
-            // Send as Socket.IO event
-            socket.send(`42["terminal:input",${JSON.stringify(data)}]`);
-          }
-        });
-
-      } catch {
-        setShowOffline(true);
-      }
-    };
-
-    // Try to connect to backend
-    connectToBackend();
-
-    // If no backend, show local shell
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      setupLocalShell(term);
-    }
-
-    // Handle resize
-    const handleResize = () => {
-      fitAddon.fit();
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          socketRef.current.send(
-            `42["terminal:resize",${JSON.stringify({ cols: dims.cols, rows: dims.rows })}]`
-          );
-        }
-      }
-    };
-    window.addEventListener('resize', handleResize);
+    const cleanup = connectToBackend(term, fitAddon);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      cleanup?.();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
       if (socketRef.current) {
+        socketRef.current.onclose = null;
         socketRef.current.close();
       }
       term.dispose();
     };
   }, []);
-
-  // Local shell fallback when backend is not connected
-  function setupLocalShell(term: XTerm) {
-    let currentLine = '';
-    const prompt = '\x1b[32mcodestudio\x1b[0m:\x1b[34m~\x1b[0m$ ';
-
-    term.clear();
-    term.writeln('\x1b[36m╔══════════════════════════════════════════════════════════╗\x1b[0m');
-    term.writeln('\x1b[36m║\x1b[0m  \x1b[1mCodeStudio Terminal\x1b[0m                                    \x1b[36m║\x1b[0m');
-    term.writeln('\x1b[36m║\x1b[0m  \x1b[90mFrontend Shell (Express server not connected)\x1b[0m           \x1b[36m║\x1b[0m');
-    term.writeln('\x1b[36m╚══════════════════════════════════════════════════════════╝\x1b[0m');
-    term.writeln('');
-    term.writeln('\x1b[90mTo enable full Linux terminal, start the backend:\x1b[0m');
-    term.writeln('\x1b[90m  cd server && npm install && npm start\x1b[0m');
-    term.writeln('');
-    term.write(prompt);
-
-    term.onData((data) => {
-      // Only handle if not connected to backend
-      if (isConnected) return;
-
-      const code = data.charCodeAt(0);
-
-      if (code === 13) {
-        term.writeln('');
-        handleLocalCommand(term, currentLine.trim());
-        currentLine = '';
-        term.write(prompt);
-      } else if (code === 127) {
-        if (currentLine.length > 0) {
-          currentLine = currentLine.slice(0, -1);
-          term.write('\b \b');
-        }
-      } else if (code >= 32 && code < 127) {
-        currentLine += data;
-        term.write(data);
-      }
-    });
-  }
-
-  function handleLocalCommand(term: XTerm, cmd: string) {
-    if (!cmd) return;
-    const args = cmd.split(' ');
-    const command = args[0].toLowerCase();
-
-    switch (command) {
-      case 'help':
-        term.writeln('  \x1b[33mAvailable commands:\x1b[0m');
-        term.writeln('    help     - Show this help message');
-        term.writeln('    clear    - Clear the terminal');
-        term.writeln('    echo     - Print text to terminal');
-        term.writeln('    date     - Show current date and time');
-        term.writeln('    whoami   - Show current user');
-        term.writeln('    pwd      - Show working directory');
-        term.writeln('    ls       - List directory contents');
-        term.writeln('    uname    - Show system information');
-        term.writeln('    node     - Node.js version info');
-        term.writeln('    npm      - NPM version info');
-        term.writeln('');
-        term.writeln('  \x1b[90mStart the Express server for full Linux terminal:\x1b[0m');
-        term.writeln('  \x1b[90m  cd server && npm install && npm start\x1b[0m');
-        break;
-      case 'clear':
-        term.clear();
-        break;
-      case 'echo':
-        term.writeln('  ' + args.slice(1).join(' '));
-        break;
-      case 'date':
-        term.writeln('  ' + new Date().toString());
-        break;
-      case 'whoami':
-        term.writeln('  developer');
-        break;
-      case 'pwd':
-        term.writeln('  /home/developer/project');
-        break;
-      case 'ls':
-        term.writeln('  \x1b[34msrc\x1b[0m/  \x1b[34mpublic\x1b[0m/  package.json  README.md  .gitignore');
-        break;
-      case 'uname':
-        term.writeln('  Linux codestudio 5.15.0 x86_64 GNU/Linux');
-        break;
-      case 'node':
-        term.writeln('  v20.10.0');
-        break;
-      case 'npm':
-        term.writeln('  10.2.3');
-        break;
-      default:
-        term.writeln(`  \x1b[31mCommand not found: ${command}\x1b[0m`);
-        term.writeln(`  Type '\x1b[33mhelp\x1b[0m' for available commands`);
-    }
-  }
 
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-terminal)' }}>
@@ -271,18 +216,37 @@ export function Terminal({ onClose, onToggle }: TerminalProps) {
           >
             Terminal
           </span>
-          {isConnected && (
+          {connectionStatus === 'connected' && (
             <span
-              className="text-xs px-1.5 py-0.5 rounded"
+              className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
               style={{ backgroundColor: 'var(--accent-green)', color: '#0d0d0d', fontSize: 9 }}
             >
-              LIVE
+              <span
+                className="inline-block rounded-full"
+                style={{ width: 5, height: 5, backgroundColor: '#0d0d0d' }}
+              />
+              LIVE · Linux PTY
+            </span>
+          )}
+          {connectionStatus === 'connecting' && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: 'var(--accent-yellow)', color: '#0d0d0d', fontSize: 9 }}
+            >
+              CONNECTING
+            </span>
+          )}
+          {connectionStatus === 'offline' && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: 'var(--accent-red)', color: '#fff', fontSize: 9 }}
+            >
+              OFFLINE
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-1">
-          <ActionButton icon="fa-plus" title="New Terminal" onClick={() => {}} />
           <ActionButton icon="fa-trash-can" title="Clear" onClick={() => xtermRef.current?.clear()} />
           <ActionButton
             icon={isExpanded ? 'fa-chevron-down' : 'fa-chevron-up'}
@@ -298,14 +262,14 @@ export function Terminal({ onClose, onToggle }: TerminalProps) {
 
       {/* Terminal Body */}
       <div className="flex-1 relative overflow-hidden">
-        {showOffline && (
+        {connectionStatus === 'offline' && (
           <div
             className="absolute top-0 left-0 right-0 z-10 flex items-center justify-center py-1"
             style={{ backgroundColor: 'rgba(244, 71, 71, 0.1)', borderBottom: '1px solid var(--accent-red)' }}
           >
             <span className="text-xs flex items-center gap-1.5" style={{ color: 'var(--accent-red)' }}>
               <i className="fa-solid fa-circle-xmark" style={{ fontSize: 10 }} />
-              Terminal server offline. Start the Express backend for full Linux access.
+              Backend offline — reconnecting…
             </span>
           </div>
         )}
