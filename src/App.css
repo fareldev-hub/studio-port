@@ -1,0 +1,24 @@
+/* Monaco Editor theme override */
+.codestudio-dark {
+  background-color: #0d0d0d !important;
+}
+
+/* Tab bar scrollbar hide */
+.overflow-x-auto::-webkit-scrollbar {
+  display: none;
+}
+
+/* Terminal xterm overrides */
+.xterm {
+  padding: 4px;
+}
+
+.xterm-viewport {
+  background-color: #0a0a0a !important;
+}
+
+/* Selection styling */
+::selection {
+  background-color: var(--bg-active);
+  color: var(--text-primary);
+}
