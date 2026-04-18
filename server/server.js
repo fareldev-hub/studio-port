@@ -52,7 +52,7 @@ const io = new Server(httpServer, {
 });
 
 const PORT = process.env.PORT || 3001;
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = process.env.HOST || '127.0.0.1';
 
 // Shell configuration
 const SHELL = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
