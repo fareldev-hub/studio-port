@@ -200,79 +200,90 @@ export function Terminal({ onClose, onToggle, onConnectionChange }: TerminalProp
 
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-terminal)' }}>
-      {/* Terminal Header */}
+      {/* Terminal Header - Linux window bar style */}
       <div
         className="flex items-center justify-between px-3 flex-shrink-0"
         style={{
-          height: 28,
-          backgroundColor: 'var(--bg-titlebar)',
-          borderBottom: '1px solid var(--border-primary)',
+          height: 32,
+          background: 'linear-gradient(180deg, #1a1a1a 0%, #141414 100%)',
+          borderBottom: '1px solid #2a2a2a',
         }}
       >
+        {/* Left: traffic lights + label */}
         <div className="flex items-center gap-2">
+          {/* macOS-style dots for aesthetic */}
+          <div className="flex items-center gap-1.5 mr-1">
+            <span className="inline-block rounded-full" style={{ width: 10, height: 10, backgroundColor: '#f44747', opacity: 0.8 }} />
+            <span className="inline-block rounded-full" style={{ width: 10, height: 10, backgroundColor: '#dcdcaa', opacity: 0.8 }} />
+            <span className="inline-block rounded-full" style={{ width: 10, height: 10, backgroundColor: '#4ec9b0', opacity: 0.8 }} />
+          </div>
+
+          <span style={{ color: '#555', fontSize: 11, margin: '0 2px' }}>|</span>
+
+          <i className="fa-solid fa-terminal" style={{ color: 'var(--accent-blue)', fontSize: 11 }} />
           <span
-            className="font-semibold uppercase"
-            style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em' }}
+            className="font-semibold"
+            style={{ color: 'var(--text-secondary)', fontSize: 11, letterSpacing: '0.06em' }}
           >
-            Terminal
+            bash — ThePort Studio
           </span>
+
+          {/* Status badge */}
           {connectionStatus === 'connected' && (
             <span
-              className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-              style={{ backgroundColor: 'var(--accent-green)', color: '#0d0d0d', fontSize: 9 }}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: 'rgba(78,201,176,0.15)', border: '1px solid rgba(78,201,176,0.3)', fontSize: 9 }}
             >
               <span
-                className="inline-block rounded-full"
-                style={{ width: 5, height: 5, backgroundColor: '#0d0d0d' }}
+                className="inline-block rounded-full animate-pulse"
+                style={{ width: 5, height: 5, backgroundColor: 'var(--accent-green)' }}
               />
-              LIVE · Linux PTY
+              <span style={{ color: 'var(--accent-green)' }}>LIVE · PTY</span>
             </span>
           )}
           {connectionStatus === 'connecting' && (
             <span
-              className="text-xs px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: 'var(--accent-yellow)', color: '#0d0d0d', fontSize: 9 }}
+              className="px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: 'rgba(220,220,170,0.12)', border: '1px solid rgba(220,220,170,0.25)', color: 'var(--accent-yellow)', fontSize: 9 }}
             >
-              CONNECTING
+              CONNECTING…
             </span>
           )}
           {connectionStatus === 'offline' && (
             <span
-              className="text-xs px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: 'var(--accent-red)', color: '#fff', fontSize: 9 }}
+              className="px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: 'rgba(244,71,71,0.12)', border: '1px solid rgba(244,71,71,0.3)', color: 'var(--accent-red)', fontSize: 9 }}
             >
               OFFLINE
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-1">
-          <ActionButton icon="fa-trash-can" title="Clear" onClick={() => xtermRef.current?.clear()} />
+        {/* Right: actions */}
+        <div className="flex items-center gap-0.5">
+          <ActionButton icon="fa-trash-can" title="Clear terminal" onClick={() => xtermRef.current?.clear()} />
           <ActionButton
             icon={isExpanded ? 'fa-chevron-down' : 'fa-chevron-up'}
-            title="Toggle Size"
-            onClick={() => {
-              setIsExpanded(!isExpanded);
-              onToggle();
-            }}
+            title="Toggle size"
+            onClick={() => { setIsExpanded(!isExpanded); onToggle(); }}
           />
-          <ActionButton icon="fa-xmark" title="Close" onClick={onClose} />
+          <ActionButton icon="fa-xmark" title="Close terminal" onClick={onClose} />
         </div>
       </div>
 
+      {/* Offline banner */}
+      {connectionStatus === 'offline' && (
+        <div
+          className="flex items-center justify-center gap-1.5 py-1 flex-shrink-0"
+          style={{ backgroundColor: 'rgba(244, 71, 71, 0.08)', borderBottom: '1px solid rgba(244,71,71,0.2)' }}
+        >
+          <i className="fa-solid fa-circle-xmark" style={{ color: 'var(--accent-red)', fontSize: 10 }} />
+          <span className="text-xs" style={{ color: 'var(--accent-red)' }}>Backend offline — reconnecting in 3s…</span>
+        </div>
+      )}
+
       {/* Terminal Body */}
       <div className="flex-1 relative overflow-hidden">
-        {connectionStatus === 'offline' && (
-          <div
-            className="absolute top-0 left-0 right-0 z-10 flex items-center justify-center py-1"
-            style={{ backgroundColor: 'rgba(244, 71, 71, 0.1)', borderBottom: '1px solid var(--accent-red)' }}
-          >
-            <span className="text-xs flex items-center gap-1.5" style={{ color: 'var(--accent-red)' }}>
-              <i className="fa-solid fa-circle-xmark" style={{ fontSize: 10 }} />
-              Backend offline — reconnecting…
-            </span>
-          </div>
-        )}
         <div ref={terminalRef} className="absolute inset-0 p-2" />
       </div>
     </div>

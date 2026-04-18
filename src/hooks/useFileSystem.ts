@@ -1,62 +1,13 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type { FileSystemEntry, PermissionState } from '@/types';
+import { saveFolderHandle, loadFolderHandle } from '@/lib/folderStorage';
 
 export function useFileSystem() {
   const [rootEntry, setRootEntry] = useState<FileSystemEntry | null>(null);
   const [entries, setEntries] = useState<FileSystemEntry[]>([]);
   const [permissionState, setPermissionState] = useState<PermissionState>('prompt');
+  const [isRestoring, setIsRestoring] = useState(true);
   const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
-
-  const requestPermission = useCallback(async (): Promise<boolean> => {
-    if (!rootHandleRef.current) return false;
-    try {
-      const result = await rootHandleRef.current.requestPermission({ mode: 'readwrite' });
-      setPermissionState(result as PermissionState);
-      return result === 'granted';
-    } catch {
-      setPermissionState('denied');
-      return false;
-    }
-  }, []);
-
-  const openFolder = useCallback(async () => {
-    try {
-      // @ts-ignore - File System Access API
-      const handle = await window.showDirectoryPicker();
-      rootHandleRef.current = handle;
-
-      const permission = await handle.queryPermission({ mode: 'readwrite' });
-      setPermissionState(permission as PermissionState);
-
-      if (permission !== 'granted') {
-        const granted = await requestPermission();
-        if (!granted) {
-          setPermissionState('denied');
-          return { success: false, reason: 'denied' as const };
-        }
-      }
-
-      const root: FileSystemEntry = {
-        name: handle.name,
-        kind: 'directory',
-        handle,
-        path: handle.name,
-        expanded: true,
-        children: [],
-      };
-
-      setRootEntry(root);
-      const children = await readDirectory(handle, handle.name);
-      setEntries(children);
-
-      return { success: true as const, handle, name: handle.name };
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        return { success: false, reason: 'cancelled' as const };
-      }
-      return { success: false, reason: 'error' as const, error: err };
-    }
-  }, [requestPermission]);
 
   const readDirectory = useCallback(
     async (dirHandle: FileSystemDirectoryHandle, parentPath: string): Promise<FileSystemEntry[]> => {
@@ -95,15 +46,111 @@ export function useFileSystem() {
     []
   );
 
+  const requestPermission = useCallback(async (): Promise<boolean> => {
+    if (!rootHandleRef.current) return false;
+    try {
+      const result = await rootHandleRef.current.requestPermission({ mode: 'readwrite' });
+      setPermissionState(result as PermissionState);
+      return result === 'granted';
+    } catch {
+      setPermissionState('denied');
+      return false;
+    }
+  }, []);
+
+  // Restore previously opened folder from IndexedDB on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const handle = await loadFolderHandle();
+        if (!handle || cancelled) {
+          setIsRestoring(false);
+          return;
+        }
+
+        // Check / request permission
+        let permission = await handle.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          permission = await handle.requestPermission({ mode: 'readwrite' });
+        }
+
+        if (permission !== 'granted' || cancelled) {
+          setIsRestoring(false);
+          return;
+        }
+
+        rootHandleRef.current = handle;
+        setPermissionState('granted');
+
+        const root: FileSystemEntry = {
+          name: handle.name,
+          kind: 'directory',
+          handle,
+          path: handle.name,
+          expanded: true,
+          children: [],
+        };
+        setRootEntry(root);
+
+        const children = await readDirectory(handle, handle.name);
+        if (!cancelled) setEntries(children);
+      } catch {
+        // ignore — user may have revoked permission or browser doesn't support it
+      } finally {
+        if (!cancelled) setIsRestoring(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const openFolder = useCallback(async () => {
+    try {
+      // @ts-ignore - File System Access API
+      const handle = await window.showDirectoryPicker();
+      rootHandleRef.current = handle;
+
+      const permission = await handle.queryPermission({ mode: 'readwrite' });
+      setPermissionState(permission as PermissionState);
+
+      if (permission !== 'granted') {
+        const granted = await requestPermission();
+        if (!granted) {
+          setPermissionState('denied');
+          return { success: false, reason: 'denied' as const };
+        }
+      }
+
+      // Persist to IndexedDB
+      await saveFolderHandle(handle);
+
+      const root: FileSystemEntry = {
+        name: handle.name,
+        kind: 'directory',
+        handle,
+        path: handle.name,
+        expanded: true,
+        children: [],
+      };
+
+      setRootEntry(root);
+      const children = await readDirectory(handle, handle.name);
+      setEntries(children);
+
+      return { success: true as const, handle, name: handle.name };
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        return { success: false, reason: 'cancelled' as const };
+      }
+      return { success: false, reason: 'error' as const, error: err };
+    }
+  }, [requestPermission, readDirectory]);
+
   const expandDirectory = useCallback(
     async (entry: FileSystemEntry): Promise<FileSystemEntry[]> => {
       if (entry.kind !== 'directory') return [];
       try {
-        const children = await readDirectory(
-          entry.handle as FileSystemDirectoryHandle,
-          entry.path
-        );
-        return children;
+        return await readDirectory(entry.handle as FileSystemDirectoryHandle, entry.path);
       } catch {
         return [];
       }
@@ -134,7 +181,7 @@ export function useFileSystem() {
   const createFile = useCallback(
     async (parentHandle: FileSystemDirectoryHandle, name: string): Promise<FileSystemFileHandle | null> => {
       try {
-        // @ts-ignore - File System Access API
+        // @ts-ignore
         const newHandle = await parentHandle.getFileHandle(name, { create: true });
         return newHandle;
       } catch {
@@ -147,7 +194,7 @@ export function useFileSystem() {
   const createDirectory = useCallback(
     async (parentHandle: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle | null> => {
       try {
-        // @ts-ignore - File System Access API
+        // @ts-ignore
         const newHandle = await parentHandle.getDirectoryHandle(name, { create: true });
         return newHandle;
       } catch {
@@ -160,7 +207,7 @@ export function useFileSystem() {
   const deleteEntry = useCallback(
     async (parentHandle: FileSystemDirectoryHandle, name: string): Promise<boolean> => {
       try {
-        // @ts-ignore - File System Access API
+        // @ts-ignore
         await parentHandle.removeEntry(name, { recursive: true });
         return true;
       } catch {
@@ -178,7 +225,6 @@ export function useFileSystem() {
       entry: FileSystemEntry
     ): Promise<boolean> => {
       try {
-        // File System Access API doesn't have direct rename, so we copy and delete
         if (entry.kind === 'file') {
           const oldHandle = await parentHandle.getFileHandle(oldName);
           const file = await oldHandle.getFile();
@@ -195,7 +241,6 @@ export function useFileSystem() {
           const oldDirHandle = await parentHandle.getDirectoryHandle(oldName);
           // @ts-ignore
           const newDirHandle = await parentHandle.getDirectoryHandle(newName, { create: true });
-          // Copy contents recursively
           await copyDirectory(oldDirHandle, newDirHandle);
           // @ts-ignore
           await parentHandle.removeEntry(oldName, { recursive: true });
@@ -218,6 +263,7 @@ export function useFileSystem() {
     rootEntry,
     entries,
     permissionState,
+    isRestoring,
     rootHandle: rootHandleRef.current,
     openFolder,
     requestPermission,

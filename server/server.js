@@ -56,7 +56,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 
 // Shell configuration
 const SHELL = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
-const SHELL_ARGS = process.platform === 'win32' ? [] : ['-l'];
+const SHELL_ARGS = process.platform === 'win32' ? [] : ['--norc', '--noprofile', '-i'];
 
 console.log(`[INFO] Platform: ${process.platform}`);
 console.log(`[INFO] Shell: ${SHELL}`);
@@ -65,13 +65,33 @@ console.log(`[INFO] Home: ${os.homedir()}`);
 // Store active PTY processes
 const ptyProcesses = new Map();
 
+// Get client IP helper
+function getClientIP(socket) {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return socket.handshake.address || '127.0.0.1';
+}
+
 // Socket.IO connection handler
 io.on('connection', (socket) => {
-  console.log(`[SOCKET] Client connected: ${socket.id}`);
+  const clientIP = getClientIP(socket);
+  console.log(`[SOCKET] Client connected: ${socket.id} from ${clientIP}`);
 
   // Initialize PTY for this socket
   if (pty) {
     try {
+      // Build the fancy ThePort prompt
+      // Using ANSI: \001 = \[ \002 = \] for non-printing chars in PS1
+      const C = '\x1b'; // ESC
+      const CYAN  = `\x01${C}[36m\x02`;
+      const RESET = `\x01${C}[0m\x02`;
+      const BOLD  = `\x01${C}[1m\x02`;
+      const DIM   = `\x01${C}[2m\x02`;
+
+      // PS1 line 1: ╭┈┈┈┈┈┈❀[ @ <ip> | ThePort ]
+      // PS1 line 2: ╰─∘ \w :
+      const PS1 = `${CYAN}╭┈┈┈┈┈┈❀[${RESET} ${DIM}@${RESET} ${CYAN}${clientIP}${RESET} ${DIM}|${RESET} ${BOLD}${CYAN}ThePort${RESET} ${CYAN}]${RESET}\\n${CYAN}╰─∘${RESET} \\w ${CYAN}:${RESET} `;
+
       const ptyProcess = pty.spawn(SHELL, SHELL_ARGS, {
         name: 'xterm-color',
         cols: 120,
@@ -82,7 +102,8 @@ io.on('connection', (socket) => {
           TERM: 'xterm-256color',
           COLORTERM: 'truecolor',
           LANG: 'en_US.UTF-8',
-          PS1: '\\[\\e[36m\\]codestudio\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]$ ',
+          PS1,
+          PROMPT_COMMAND: '',
         }
       });
 
