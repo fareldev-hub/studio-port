@@ -51,6 +51,34 @@ export interface EditorPosition {
 
 export type PermissionState = 'prompt' | 'granted' | 'denied';
 
+export interface AppSettings {
+  autoSave: boolean;
+  autoSaveDelay: number;
+  editorFontSize: number;
+  editorTabSize: number;
+  wordWrap: boolean;
+  minimap: boolean;
+  terminalFontSize: number;
+  lineHeight: number;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  autoSave: true,
+  autoSaveDelay: 1500,
+  editorFontSize: 14,
+  editorTabSize: 2,
+  wordWrap: false,
+  minimap: false,
+  terminalFontSize: 13,
+  lineHeight: 22,
+};
+
+export interface DetectedPort {
+  port: number;
+  url: string;
+  detectedAt: number;
+}
+
 export interface FileIconConfig {
   icon: string;
   color: string;

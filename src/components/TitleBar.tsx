@@ -3,46 +3,31 @@ interface TitleBarProps {
   terminalConnected: boolean;
   onOpenFolder: () => void;
   onToggleSidebar: () => void;
+  onOpenSettings: () => void;
 }
 
-export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggleSidebar }: TitleBarProps) {
+export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggleSidebar, onOpenSettings }: TitleBarProps) {
   return (
     <div
       className="flex items-center justify-between px-4 select-none flex-shrink-0"
-      style={{ 
-        height: 56, 
-        backgroundColor: '#000', 
-        borderBottom: '1px solid #333' 
-      }}
+      style={{ height: 56, backgroundColor: '#000', borderBottom: '1px solid #333' }}
     >
       {/* Left: Brand */}
       <div className="flex items-center gap-4">
-        {/* Logo mark */}
         <div className="flex items-center gap-3">
-          <img 
-            src="https://www.tikdash.my.id/the-port.jpg" 
+          <img
+            src="https://www.tikdash.my.id/the-port.jpg"
             alt="ThePort Logo"
-            style={{ 
-              width: 40, 
-              height: 40, 
-              objectFit: 'contain',
-              borderRadius: 8
-            }}
+            style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 8 }}
           />
           <div className="flex flex-col" style={{ lineHeight: 1 }}>
-            <span style={{ color: '#fff', fontSize: 15, fontWeight: 700, letterSpacing: '0.04em' }}>
-              ThePort
-            </span>
-            <span style={{ color: '#888', fontSize: 9, fontWeight: 500, letterSpacing: '0.12em', marginTop: 2 }}>
-              studio
-            </span>
+            <span style={{ color: '#fff', fontSize: 15, fontWeight: 700, letterSpacing: '0.04em' }}>ThePort</span>
+            <span style={{ color: '#888', fontSize: 9, fontWeight: 500, letterSpacing: '0.12em', marginTop: 2 }}>studio</span>
           </div>
         </div>
 
-        {/* Divider */}
         <div style={{ width: 1, height: 24, backgroundColor: '#333' }} />
 
-        {/* Folder name or Open button */}
         {folderName ? (
           <span className="text-sm truncate max-w-xs" style={{ color: '#aaa' }}>
             <i className="fa-regular fa-folder-open mr-1.5" />
@@ -64,7 +49,6 @@ export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggle
 
       {/* Right: Status + controls */}
       <div className="flex items-center gap-3">
-        {/* Developer credit — hidden on mobile */}
         <a
           href="https://fareldev.vercel.app"
           target="_blank"
@@ -79,18 +63,12 @@ export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggle
           <span style={{ fontSize: 10 }}>by fareldev</span>
         </a>
 
-        {/* Divider */}
         <div className="hidden md:block" style={{ width: 1, height: 16, backgroundColor: '#333' }} />
 
-        {/* Terminal status */}
         <div className="flex items-center gap-1.5" title={terminalConnected ? 'Terminal connected' : 'Terminal offline'}>
           <span
             className="inline-block rounded-full flex-shrink-0"
-            style={{
-              width: 7,
-              height: 7,
-              backgroundColor: terminalConnected ? '#22c55e' : '#ef4444',
-            }}
+            style={{ width: 7, height: 7, backgroundColor: terminalConnected ? '#22c55e' : '#ef4444' }}
           />
           <span className="text-xs hidden sm:inline" style={{ color: '#666', fontSize: 10 }}>
             {terminalConnected ? 'Terminal Ready' : 'Terminal Offline'}
@@ -98,40 +76,32 @@ export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggle
         </div>
 
         {/* Sidebar toggle */}
-        <button
-          onClick={onToggleSidebar}
-          className="p-1.5 rounded transition-colors"
-          style={{ color: '#666' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = '#fff';
-            e.currentTarget.style.backgroundColor = '#1a1a1a';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = '#666';
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          title="Toggle Sidebar (Ctrl+B)"
-        >
-          <i className="fa-solid fa-table-columns" style={{ fontSize: 12 }} />
-        </button>
+        <TitleBarButton icon="fa-table-columns" title="Toggle Sidebar (Ctrl+B)" onClick={onToggleSidebar} />
 
         {/* Settings */}
-        <button
-          className="p-1.5 rounded transition-colors"
-          style={{ color: '#666' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = '#fff';
-            e.currentTarget.style.backgroundColor = '#1a1a1a';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = '#666';
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          title="Settings"
-        >
-          <i className="fa-solid fa-gear" style={{ fontSize: 12 }} />
-        </button>
+        <TitleBarButton icon="fa-gear" title="Settings" onClick={onOpenSettings} />
       </div>
     </div>
+  );
+}
+
+function TitleBarButton({ icon, title, onClick }: { icon: string; title: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="p-1.5 rounded transition-colors"
+      style={{ color: '#666' }}
+      title={title}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = '#fff';
+        e.currentTarget.style.backgroundColor = '#1a1a1a';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = '#666';
+        e.currentTarget.style.backgroundColor = 'transparent';
+      }}
+    >
+      <i className={`fa-solid ${icon}`} style={{ fontSize: 12 }} />
+    </button>
   );
 }
