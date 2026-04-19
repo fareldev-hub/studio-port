@@ -8,10 +8,12 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "socket.io": "^4.7.4",
+    "figlet": "^1.11.0",
+    "neofetch": "^7.1.0",
     "node-pty": "^1.0.0",
-    "cors": "^2.8.5"
+    "socket.io": "^4.7.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
