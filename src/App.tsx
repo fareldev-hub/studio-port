@@ -172,6 +172,17 @@ export default function App() {
       toast.showPermissionGranted(result.name || 'Unknown Folder');
       setExpandedDirs(new Set());
       if (isMobile) { setMobileSidebarOpen(false); setMobilePanel('editor'); }
+      // Create server-side terminal directory for this project
+      const folderName = result.name || '';
+      if (folderName) {
+        try {
+          await fetch('/api/terminal/create-dir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderName }),
+          });
+        } catch { /* ignore if backend unavailable */ }
+      }
     } else if (result.reason === 'denied') {
       toast.showPermissionDenied(() => handleOpenFolder());
     }
@@ -389,6 +400,25 @@ export default function App() {
     />
   );
 
+  const handleRequestFile = useCallback(async (fileName: string, currentPath: string): Promise<string | null> => {
+    const inTab = tabs.find((t) => t.name === fileName);
+    if (inTab) return inTab.content;
+    if (!fs.rootEntry) return null;
+    try {
+      const pathParts = currentPath.split('/');
+      pathParts.pop();
+      const dirHandle = fs.rootEntry.handle as FileSystemDirectoryHandle;
+      let target: FileSystemDirectoryHandle = dirHandle;
+      for (const part of pathParts.slice(1)) {
+        try { target = await target.getDirectoryHandle(part); } catch { return null; }
+      }
+      const fileHandle = await target.getFileHandle(fileName);
+      return await fs.readFile(fileHandle);
+    } catch {
+      return null;
+    }
+  }, [tabs, fs]);
+
   const editorArea = (
     <Editor
       tabs={tabs}
@@ -399,6 +429,7 @@ export default function App() {
       onCursorPositionChange={setCursorPos}
       onNewFile={() => fs.rootEntry?.handle && setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })}
       settings={settings}
+      onRequestFile={handleRequestFile}
     />
   );
 
@@ -448,6 +479,25 @@ export default function App() {
 
           <div className="flex-1 flex flex-col overflow-hidden">
             {editorArea}
+
+            {!terminalVisible && (
+              <div
+                className="flex-shrink-0 flex items-center px-3"
+                style={{ height: 28, backgroundColor: 'var(--bg-titlebar)', borderTop: '1px solid var(--border-primary)' }}
+              >
+                <button
+                  onClick={() => setTerminalVisible(true)}
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors text-xs"
+                  style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-hover)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = '#1a2a3a'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                  title="Show Terminal (Ctrl+`)"
+                >
+                  <i className="fa-solid fa-terminal" style={{ fontSize: 10 }} />
+                  <span>Terminal</span>
+                </button>
+              </div>
+            )}
 
             {terminalVisible && (
               <>

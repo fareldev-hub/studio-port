@@ -14,6 +14,7 @@ interface EditorProps {
   onCursorPositionChange: (pos: { line: number; col: number }) => void;
   onNewFile: () => void;
   settings?: AppSettings;
+  onRequestFile?: (fileName: string, currentPath: string) => Promise<string | null>;
 }
 
 export default function EditorPanel({
@@ -25,6 +26,7 @@ export default function EditorPanel({
   onCursorPositionChange,
   onNewFile,
   settings,
+  onRequestFile,
 }: EditorProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [previewTabId, setPreviewTabId] = useState<string | null>(null);
@@ -164,7 +166,10 @@ export default function EditorPanel({
             <HtmlPreview
               content={activeTab.content}
               fileName={activeTab.name}
+              currentPath={activeTab.path}
+              tabs={tabs}
               onClose={() => setPreviewTabId(null)}
+              onRequestFile={onRequestFile}
             />
           </div>
         )}
