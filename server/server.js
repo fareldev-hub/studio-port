@@ -61,9 +61,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.emit('terminal:data', '\x1b[2J\x1b[H' + generateBanner());
+  socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
   
-  let currentCommand = '';
+  let buffer = '';
 
   ptyProcess.onData((data) => {
     socket.emit('terminal:data', data);
@@ -71,25 +71,32 @@ io.on('connection', (socket) => {
 
   socket.on('terminal:input', (data) => {
     if (data === '\r') {
-        const cmd = currentCommand.trim();
+        const cmd = buffer.trim();
+        
         if (cmd === 'clear') {
-            socket.emit('terminal:data', '\x1b[2J\x1b[H' + generateBanner());
-            currentCommand = '';
-            ptyProcess.write('\x03\r'); 
+            buffer = '';
+            // Membersihkan client-side UI dan cetak ulang banner
+            socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
+            // Mengirim Form Feed (\x0c) ke PTY Bash untuk sinkronisasi state "clear"
+            ptyProcess.write('\x0c'); 
             return;
         } 
+        
         if (cmd === 'clear --force') {
-            socket.emit('terminal:data', '\x1b[2J\x1b[H');
-            currentCommand = '';
-            ptyProcess.write('\x03\r');
+            buffer = '';
+            // Clear total tanpa cetak ulang banner
+            socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H');
+            ptyProcess.write('\x0c');
             return;
         }
-        currentCommand = '';
+        
+        buffer = '';
     } else if (data === '\u007f') {
-        currentCommand = currentCommand.slice(0, -1);
-    } else {
-        currentCommand += data;
+        buffer = buffer.slice(0, -1);
+    } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        buffer += data;
     }
+    
     if (ptyProcess) ptyProcess.write(data);
   });
 
