@@ -1,1 +1,0 @@
-document.getElementById("bacot").innerText = "KONTHOLLL"
