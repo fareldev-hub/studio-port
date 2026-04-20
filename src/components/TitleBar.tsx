@@ -1,12 +1,14 @@
 interface TitleBarProps {
   folderName?: string;
   terminalConnected: boolean;
+  terminalVisible: boolean;
   onOpenFolder: () => void;
   onToggleSidebar: () => void;
+  onToggleTerminal: () => void;
   onOpenSettings: () => void;
 }
 
-export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggleSidebar, onOpenSettings }: TitleBarProps) {
+export function TitleBar({ folderName, terminalConnected, terminalVisible, onOpenFolder, onToggleSidebar, onToggleTerminal, onOpenSettings }: TitleBarProps) {
   return (
     <div
       className="flex items-center justify-between px-4 select-none flex-shrink-0"
@@ -78,6 +80,14 @@ export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggle
         {/* Sidebar toggle */}
         <TitleBarButton icon="fa-table-columns" title="Toggle Sidebar (Ctrl+B)" onClick={onToggleSidebar} />
 
+        {/* Terminal toggle */}
+        <TitleBarButton
+          icon="fa-terminal"
+          title={terminalVisible ? 'Hide Terminal' : 'Show Terminal'}
+          onClick={onToggleTerminal}
+          active={terminalVisible}
+        />
+
         {/* Settings */}
         <TitleBarButton icon="fa-gear" title="Settings" onClick={onOpenSettings} />
       </div>
@@ -85,20 +95,20 @@ export function TitleBar({ folderName, terminalConnected, onOpenFolder, onToggle
   );
 }
 
-function TitleBarButton({ icon, title, onClick }: { icon: string; title: string; onClick: () => void }) {
+function TitleBarButton({ icon, title, onClick, active }: { icon: string; title: string; onClick: () => void; active?: boolean }) {
   return (
     <button
       onClick={onClick}
       className="p-1.5 rounded transition-colors"
-      style={{ color: '#666' }}
+      style={{ color: active ? '#22c55e' : '#666', backgroundColor: active ? '#0f2210' : 'transparent' }}
       title={title}
       onMouseEnter={(e) => {
-        e.currentTarget.style.color = '#fff';
-        e.currentTarget.style.backgroundColor = '#1a1a1a';
+        e.currentTarget.style.color = active ? '#4ade80' : '#fff';
+        e.currentTarget.style.backgroundColor = active ? '#14321a' : '#1a1a1a';
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.color = '#666';
-        e.currentTarget.style.backgroundColor = 'transparent';
+        e.currentTarget.style.color = active ? '#22c55e' : '#666';
+        e.currentTarget.style.backgroundColor = active ? '#0f2210' : 'transparent';
       }}
     >
       <i className={`fa-solid ${icon}`} style={{ fontSize: 12 }} />

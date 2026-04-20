@@ -430,8 +430,10 @@ export default function App() {
       <TitleBar
         folderName={fs.rootEntry?.name}
         terminalConnected={terminalConnected}
+        terminalVisible={terminalVisible}
         onOpenFolder={() => setOpenProjectVisible(true)}
         onToggleSidebar={() => { if (isMobile) setMobileSidebarOpen((v) => !v); else setSidebarVisible((v) => !v); }}
+        onToggleTerminal={() => setTerminalVisible((v) => !v)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 

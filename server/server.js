@@ -2,9 +2,26 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const os = require('os');
 const pty = require('node-pty');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const figlet = require('figlet');
+
+function generateBanner() {
+  const logo = figlet.textSync('ThePort', {
+    font: 'Standard',
+    horizontalLayout: 'default',
+    verticalLayout: 'default'
+  });
+  const line = '─'.repeat(50);
+  return `\x1b[36m${logo}\x1b[0m\r\n` +
+    `Made by \x1b[1mFarelDev\x1b[0m\r\n` +
+    `Tiktok : \x1b[35m@logic__vibes\x1b[0m\r\n` +
+    `Web    : \x1b[34mfareldev.vercel.app\x1b[0m\r\n\r\n` +
+    `Jika membutuhkan bantuan silahkan ketik "\x1b[33mhelp\x1b[0m"\r\n` +
+    `\x1b[90m${line}\x1b[0m\r\n`;
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -188,9 +205,10 @@ app.post('/api/terminal/create-dir', (req, res) => {
 // ─── Socket.IO / Terminal ────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
-  const clientIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || '127.0.0.1';
+  const rawIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || '127.0.0.1';
+  const clientIP = rawIP.split(',')[0].trim();
 
-  const customPS1 = `\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\][\\[\\e[1;37m\\] Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\$ `;
+  const customPS1 = `\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\]\\[\\e[1;37m\\][ Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\$ `;
 
   const ptyProcess = pty.spawn(SHELL, ['--norc', '--noprofile', '-i'], {
     name: 'xterm-256color',
@@ -200,6 +218,8 @@ io.on('connection', (socket) => {
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', PS1: customPS1 }
   });
 
+  socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
+
   let buffer = '';
 
   ptyProcess.onData((data) => { socket.emit('terminal:data', data); });
@@ -207,7 +227,13 @@ io.on('connection', (socket) => {
   socket.on('terminal:input', (data) => {
     if (data === '\r') {
       const cmd = buffer.trim();
-      if (cmd === 'clear' || cmd === 'clear --force') {
+      if (cmd === 'clear') {
+        buffer = '';
+        socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
+        ptyProcess.write('\x0c');
+        return;
+      }
+      if (cmd === 'clear --force') {
         buffer = '';
         socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H');
         ptyProcess.write('\x0c');
