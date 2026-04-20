@@ -2,9 +2,9 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const os = require('os');
 const pty = require('node-pty');
 const fs = require('fs');
+const fsp = require('fs/promises');
 
 const app = express();
 const httpServer = createServer(app);
@@ -13,33 +13,179 @@ const io = new Server(httpServer, {
   path: '/socket.io/'
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 const PORT = process.env.PORT || 3001;
 const SHELL = 'bash';
+const TERMINAL_BASE = path.resolve(__dirname, 'terminal');
 
-const TERMINAL_BASE_DIR = path.resolve(__dirname, 'terminal');
+if (!fs.existsSync(TERMINAL_BASE)) fs.mkdirSync(TERMINAL_BASE, { recursive: true });
 
-if (!fs.existsSync(TERMINAL_BASE_DIR)) {
-  fs.mkdirSync(TERMINAL_BASE_DIR, { recursive: true });
+function safePath(project, relPath) {
+  const base = path.join(TERMINAL_BASE, project);
+  const full = path.resolve(base, relPath || '');
+  if (!full.startsWith(base)) throw new Error('Path escape');
+  return full;
 }
+
+// ─── Projects ───────────────────────────────────────────────────────────────
+
+app.get('/api/projects', async (req, res) => {
+  try {
+    const items = await fsp.readdir(TERMINAL_BASE, { withFileTypes: true });
+    const projects = items
+      .filter(d => d.isDirectory())
+      .map(d => ({ name: d.name }));
+    res.json({ projects });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/projects', async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const dir = path.join(TERMINAL_BASE, safe);
+  try {
+    await fsp.mkdir(dir, { recursive: true });
+    res.json({ success: true, name: safe });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── File listing (recursive) ────────────────────────────────────────────────
+
+async function listDir(dirPath, relativeTo) {
+  const entries = [];
+  let items;
+  try { items = await fsp.readdir(dirPath, { withFileTypes: true }); }
+  catch { return []; }
+  for (const item of items) {
+    const full = path.join(dirPath, item.name);
+    const rel = path.relative(relativeTo, full).replace(/\\/g, '/');
+    if (item.isDirectory()) {
+      entries.push({ name: item.name, kind: 'directory', path: rel });
+    } else {
+      entries.push({ name: item.name, kind: 'file', path: rel });
+    }
+  }
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return entries;
+}
+
+app.get('/api/files/:project/list', async (req, res) => {
+  const { project } = req.params;
+  const rel = req.query.path || '';
+  try {
+    const base = path.join(TERMINAL_BASE, project);
+    const dir = safePath(project, rel);
+    const entries = await listDir(dir, base);
+    res.json({ entries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Read file ───────────────────────────────────────────────────────────────
+
+app.get('/api/files/:project/read', async (req, res) => {
+  const { project } = req.params;
+  const rel = req.query.path || '';
+  try {
+    const full = safePath(project, rel);
+    const content = await fsp.readFile(full, 'utf8');
+    res.type('text/plain').send(content);
+  } catch (e) { res.status(404).json({ error: e.message }); }
+});
+
+// ─── Write file ──────────────────────────────────────────────────────────────
+
+app.put('/api/files/:project/write', async (req, res) => {
+  const { project } = req.params;
+  const rel = req.query.path || '';
+  try {
+    const full = safePath(project, rel);
+    await fsp.mkdir(path.dirname(full), { recursive: true });
+    await fsp.writeFile(full, req.body.content ?? '', 'utf8');
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Create file/directory ───────────────────────────────────────────────────
+
+app.post('/api/files/:project/create', async (req, res) => {
+  const { project } = req.params;
+  const { path: rel, kind } = req.body;
+  try {
+    const full = safePath(project, rel);
+    if (kind === 'directory') {
+      await fsp.mkdir(full, { recursive: true });
+    } else {
+      await fsp.mkdir(path.dirname(full), { recursive: true });
+      await fsp.writeFile(full, '', 'utf8');
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Delete ──────────────────────────────────────────────────────────────────
+
+app.delete('/api/files/:project/delete', async (req, res) => {
+  const { project } = req.params;
+  const rel = req.query.path || '';
+  try {
+    const full = safePath(project, rel);
+    await fsp.rm(full, { recursive: true, force: true });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Rename ──────────────────────────────────────────────────────────────────
+
+app.post('/api/files/:project/rename', async (req, res) => {
+  const { project } = req.params;
+  const { oldPath, newPath } = req.body;
+  try {
+    const oldFull = safePath(project, oldPath);
+    const newFull = safePath(project, newPath);
+    await fsp.rename(oldFull, newFull);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Bulk upload ─────────────────────────────────────────────────────────────
+
+app.post('/api/files/:project/upload', async (req, res) => {
+  const { project } = req.params;
+  const { files } = req.body; // [{path, content}]
+  if (!Array.isArray(files)) return res.status(400).json({ error: 'files array required' });
+  try {
+    const base = path.join(TERMINAL_BASE, project);
+    await fsp.mkdir(base, { recursive: true });
+    let count = 0;
+    for (const f of files) {
+      const full = safePath(project, f.path);
+      await fsp.mkdir(path.dirname(full), { recursive: true });
+      await fsp.writeFile(full, f.content ?? '', 'utf8');
+      count++;
+    }
+    res.json({ success: true, count });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Terminal directory helper ────────────────────────────────────────────────
 
 app.post('/api/terminal/create-dir', (req, res) => {
   const { folderName } = req.body;
-  if (!folderName || typeof folderName !== 'string') {
-    return res.status(400).json({ error: 'Invalid folderName' });
-  }
-  const safeName = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
-  const targetDir = path.join(TERMINAL_BASE_DIR, safeName);
+  if (!folderName) return res.status(400).json({ error: 'folderName required' });
+  const safe = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const dir = path.join(TERMINAL_BASE, safe);
   try {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-    res.json({ success: true, path: targetDir, relativePath: `/terminal/${safeName}` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    res.json({ success: true, path: dir });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── Socket.IO / Terminal ────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
   const clientIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || '127.0.0.1';
@@ -50,31 +196,18 @@ io.on('connection', (socket) => {
     name: 'xterm-256color',
     cols: 90,
     rows: 30,
-    cwd: TERMINAL_BASE_DIR,
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      PS1: customPS1
-    }
+    cwd: TERMINAL_BASE,
+    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', PS1: customPS1 }
   });
 
   let buffer = '';
 
-  ptyProcess.onData((data) => {
-    socket.emit('terminal:data', data);
-  });
+  ptyProcess.onData((data) => { socket.emit('terminal:data', data); });
 
   socket.on('terminal:input', (data) => {
     if (data === '\r') {
       const cmd = buffer.trim();
-      if (cmd === 'clear') {
-        buffer = '';
-        socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H');
-        ptyProcess.write('\x0c');
-        return;
-      }
-      if (cmd === 'clear --force') {
+      if (cmd === 'clear' || cmd === 'clear --force') {
         buffer = '';
         socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H');
         ptyProcess.write('\x0c');
@@ -91,21 +224,18 @@ io.on('connection', (socket) => {
 
   socket.on('terminal:set-folder', (folderName) => {
     if (!folderName || typeof folderName !== 'string') return;
-    const safeName = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
-    const targetDir = path.join(TERMINAL_BASE_DIR, safeName);
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-    const cdCmd = `cd "${targetDir}"\r`;
-    ptyProcess.write(cdCmd);
+    const safe = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+    const dir = path.join(TERMINAL_BASE, safe);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    ptyProcess.write(`cd "${dir}"\r`);
   });
 
   socket.on('terminal:resize', ({ cols, rows }) => {
-    try { ptyProcess.resize(cols, rows); } catch (err) {}
+    try { ptyProcess.resize(cols, rows); } catch (_) {}
   });
 
   socket.on('disconnect', () => {
-    try { ptyProcess.kill(); } catch (e) {}
+    try { ptyProcess.kill(); } catch (_) {}
   });
 });
 

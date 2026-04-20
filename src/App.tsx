@@ -10,7 +10,9 @@ import { NewItemModal } from '@/components/NewItemModal';
 import { DeleteConfirmModal } from '@/components/DeleteConfirmModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { PortsPanel } from '@/components/PortsPanel';
-import { useFileSystem } from '@/hooks/useFileSystem';
+import { OpenProjectModal } from '@/components/OpenProjectModal';
+import { useServerFileSystem } from '@/hooks/useServerFileSystem';
+import { serverApi } from '@/lib/serverFs';
 import { useToast } from '@/hooks/useToast';
 import type { FileSystemEntry, OpenTab, ContextMenuItem, AppSettings, DetectedPort } from '@/types';
 import { DEFAULT_SETTINGS } from '@/types';
@@ -43,7 +45,7 @@ function saveSettings(s: AppSettings) {
 }
 
 export default function App() {
-  const fs = useFileSystem();
+  const fs = useServerFileSystem();
   const toast = useToast();
   const isMobile = useIsMobile();
 
@@ -67,6 +69,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [detectedPorts, setDetectedPorts] = useState<DetectedPort[]>([]);
   const [portsPanelVisible, setPortsPanelVisible] = useState(true);
+  const [openProjectVisible, setOpenProjectVisible] = useState(false);
 
   const autoSaveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -140,7 +143,7 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey) {
         switch (e.key.toLowerCase()) {
-          case 'o': e.preventDefault(); handleOpenFolder(); break;
+          case 'o': e.preventDefault(); setOpenProjectVisible(true); break;
           case 'n':
             e.preventDefault();
             if (fs.rootEntry?.handle) setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle });
@@ -164,29 +167,22 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTabId, selectedEntry, fs.rootEntry, isMobile]);
+  }, [activeTabId, selectedEntry, fs.rootEntry, isMobile, handleSaveFile]);
 
-  const handleOpenFolder = useCallback(async () => {
-    const result = await fs.openFolder();
-    if (result.success) {
-      toast.showPermissionGranted(result.name || 'Unknown Folder');
-      setExpandedDirs(new Set());
-      if (isMobile) { setMobileSidebarOpen(false); setMobilePanel('editor'); }
-      // Create server-side terminal directory for this project
-      const folderName = result.name || '';
-      if (folderName) {
-        try {
-          await fetch('/api/terminal/create-dir', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderName }),
-          });
-        } catch { /* ignore if backend unavailable */ }
-      }
-    } else if (result.reason === 'denied') {
-      toast.showPermissionDenied(() => handleOpenFolder());
-    }
+  const handleOpenProject = useCallback(async (projectName: string) => {
+    setOpenProjectVisible(false);
+    setTabs([]);
+    setActiveTabId(null);
+    setExpandedDirs(new Set());
+    setSelectedEntry(null);
+    await fs.openProject(projectName);
+    toast.showPermissionGranted(projectName);
+    if (isMobile) { setMobileSidebarOpen(false); setMobilePanel('editor'); }
   }, [fs, toast, isMobile]);
+
+  const handleUploadLocal = useCallback(async (projectName: string, files: { path: string; content: string }[]) => {
+    await serverApi.uploadFiles(projectName, files);
+  }, []);
 
   const handleFileClick = useCallback(
     async (entry: FileSystemEntry) => {
@@ -295,8 +291,8 @@ export default function App() {
 
   const handleRenameEntry = useCallback(async (newName: string) => {
     if (!renamingEntry || !renamingEntry.entry.parentHandle) return;
-    const { entry, parentHandle } = { entry: renamingEntry.entry, parentHandle: renamingEntry.entry.parentHandle };
-    const success = await fs.renameEntry(parentHandle, entry.name, newName, entry);
+    const { entry } = renamingEntry;
+    const success = await fs.renameEntry(entry.parentHandle, entry.name, newName, entry);
     if (success) {
       toast.showInfo('Renamed', `"${entry.name}" renamed to "${newName}".`);
       const tab = tabs.find((t) => t.path === entry.path);
@@ -353,9 +349,12 @@ export default function App() {
       e.preventDefault();
       e.stopPropagation();
       setSelectedEntry(entry);
+      const parentForNew = entry.kind === 'directory'
+        ? (entry.handle as FileSystemDirectoryHandle)
+        : (entry.parentHandle as FileSystemDirectoryHandle);
       const items: ContextMenuItem[] = [
-        { label: 'New File', icon: 'fa-file-circle-plus', action: () => setNewItemModal({ type: 'file', parentHandle: entry.kind === 'directory' ? (entry.handle as FileSystemDirectoryHandle) : (entry.parentHandle as FileSystemDirectoryHandle) }) },
-        { label: 'New Folder', icon: 'fa-folder-plus', action: () => setNewItemModal({ type: 'folder', parentHandle: entry.kind === 'directory' ? (entry.handle as FileSystemDirectoryHandle) : (entry.parentHandle as FileSystemDirectoryHandle) }) },
+        { label: 'New File', icon: 'fa-file-circle-plus', action: () => setNewItemModal({ type: 'file', parentHandle: parentForNew }) },
+        { label: 'New Folder', icon: 'fa-folder-plus', action: () => setNewItemModal({ type: 'folder', parentHandle: parentForNew }) },
         { label: '', divider: true, action: () => {} },
         { label: 'Rename', icon: 'fa-pen', shortcut: 'F2', action: () => setRenamingEntry({ entry, newName: entry.name }) },
         { label: 'Delete', icon: 'fa-trash-can', shortcut: 'Del', action: () => setDeleteModal({ entry }) },
@@ -366,6 +365,18 @@ export default function App() {
     },
     [fs]
   );
+
+  const handleRequestFile = useCallback(async (fileName: string, currentPath: string): Promise<string | null> => {
+    const inTab = tabs.find((t) => t.name === fileName);
+    if (inTab) return inTab.content;
+    if (!fs.rootEntry || !fs.currentProject) return null;
+    const parts = currentPath.split('/');
+    parts.pop();
+    const dir = parts.slice(1).join('/');
+    const relPath = dir ? `${dir}/${fileName}` : fileName;
+    try { return await serverApi.readFile(fs.currentProject, relPath); }
+    catch { return null; }
+  }, [tabs, fs]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
@@ -380,7 +391,7 @@ export default function App() {
       onFileClick={handleFileClick}
       onFolderToggle={handleFolderToggle}
       onContextMenu={handleEntryContextMenu}
-      onOpenFolder={handleOpenFolder}
+      onOpenFolder={() => setOpenProjectVisible(true)}
       onNewFile={() => fs.rootEntry?.handle && setNewItemModal({ type: 'file', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })}
       onNewFolder={() => fs.rootEntry?.handle && setNewItemModal({ type: 'folder', parentHandle: fs.rootEntry.handle as FileSystemDirectoryHandle })}
       onRefresh={fs.refreshEntries}
@@ -399,25 +410,6 @@ export default function App() {
       terminalFontSize={settings.terminalFontSize}
     />
   );
-
-  const handleRequestFile = useCallback(async (fileName: string, currentPath: string): Promise<string | null> => {
-    const inTab = tabs.find((t) => t.name === fileName);
-    if (inTab) return inTab.content;
-    if (!fs.rootEntry) return null;
-    try {
-      const pathParts = currentPath.split('/');
-      pathParts.pop();
-      const dirHandle = fs.rootEntry.handle as FileSystemDirectoryHandle;
-      let target: FileSystemDirectoryHandle = dirHandle;
-      for (const part of pathParts.slice(1)) {
-        try { target = await target.getDirectoryHandle(part); } catch { return null; }
-      }
-      const fileHandle = await target.getFileHandle(fileName);
-      return await fs.readFile(fileHandle);
-    } catch {
-      return null;
-    }
-  }, [tabs, fs]);
 
   const editorArea = (
     <Editor
@@ -438,7 +430,7 @@ export default function App() {
       <TitleBar
         folderName={fs.rootEntry?.name}
         terminalConnected={terminalConnected}
-        onOpenFolder={handleOpenFolder}
+        onOpenFolder={() => setOpenProjectVisible(true)}
         onToggleSidebar={() => { if (isMobile) setMobileSidebarOpen((v) => !v); else setSidebarVisible((v) => !v); }}
         onOpenSettings={() => setSettingsOpen(true)}
       />
@@ -491,7 +483,7 @@ export default function App() {
                   style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-hover)' }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = '#1a2a3a'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                  title="Show Terminal (Ctrl+`)"
+                  title="Show Terminal"
                 >
                   <i className="fa-solid fa-terminal" style={{ fontSize: 10 }} />
                   <span>Terminal</span>
@@ -537,6 +529,13 @@ export default function App() {
       {newItemModal && <NewItemModal type={newItemModal.type} onCreate={handleCreateItem} onCancel={() => setNewItemModal(null)} />}
       {deleteModal && <DeleteConfirmModal fileName={deleteModal.entry.name} onConfirm={handleDeleteEntry} onCancel={() => setDeleteModal(null)} />}
       {settingsOpen && <SettingsModal settings={settings} onSave={handleSettingsSave} onClose={() => setSettingsOpen(false)} />}
+      {openProjectVisible && (
+        <OpenProjectModal
+          onOpen={handleOpenProject}
+          onClose={() => setOpenProjectVisible(false)}
+          onUploadLocal={handleUploadLocal}
+        />
+      )}
     </div>
   );
 }
