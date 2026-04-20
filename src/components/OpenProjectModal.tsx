@@ -13,6 +13,9 @@ export function OpenProjectModal({ onOpen, onClose, onUploadLocal }: OpenProject
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +76,51 @@ export function OpenProjectModal({ onOpen, onClose, onUploadLocal }: OpenProject
     } catch (e: unknown) {
       if ((e as Error).name !== 'AbortError') setError((e as Error).message);
     } finally { setUploading(null); }
+  }
+
+  async function handleSaveToDevice(projectName: string) {
+    try {
+      setSaving(projectName);
+      setError('');
+      // @ts-ignore
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const files = await serverApi.exportProject(projectName);
+
+      async function writeFile(root: FileSystemDirectoryHandle, filePath: string, content: string) {
+        const parts = filePath.split('/');
+        let current: FileSystemDirectoryHandle = root;
+        for (let i = 0; i < parts.length - 1; i++) {
+          // @ts-ignore
+          current = await current.getDirectoryHandle(parts[i], { create: true });
+        }
+        // @ts-ignore
+        const fileHandle = await current.getFileHandle(parts[parts.length - 1], { create: true });
+        // @ts-ignore
+        const writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+      }
+
+      for (const f of files) {
+        await writeFile(dirHandle, f.path, f.content);
+      }
+    } catch (e: unknown) {
+      if ((e as Error).name !== 'AbortError') setError(`Save failed: ${(e as Error).message}`);
+    } finally { setSaving(null); }
+  }
+
+  async function handleDeleteProject(projectName: string) {
+    setDeleting(projectName);
+    setError('');
+    try {
+      const ok = await serverApi.deleteProject(projectName);
+      if (ok) {
+        setProjects((prev) => prev.filter((p) => p.name !== projectName));
+      } else {
+        setError(`Failed to delete "${projectName}".`);
+      }
+    } catch (e: unknown) { setError((e as Error).message); }
+    finally { setDeleting(null); setConfirmDelete(null); }
   }
 
   return (
@@ -158,18 +206,73 @@ export function OpenProjectModal({ onOpen, onClose, onUploadLocal }: OpenProject
             ) : (
               <div className="flex flex-col gap-1">
                 {projects.map((p) => (
-                  <button
-                    key={p.name}
-                    onClick={() => onOpen(p.name)}
-                    className="flex items-center gap-3 px-3 py-2 rounded text-sm text-left transition-colors"
-                    style={{ backgroundColor: '#0d0d0d', border: '1px solid #1e1e1e', color: '#ccc' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#1a2a3a'; e.currentTarget.style.borderColor = '#4fc1ff40'; e.currentTarget.style.color = '#fff'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#0d0d0d'; e.currentTarget.style.borderColor = '#1e1e1e'; e.currentTarget.style.color = '#ccc'; }}
-                  >
-                    <i className="fa-solid fa-folder" style={{ color: '#dcdcaa', fontSize: 13 }} />
-                    <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>{p.name}</span>
-                    <i className="fa-solid fa-arrow-right ml-auto" style={{ fontSize: 11, color: '#444' }} />
-                  </button>
+                  <div key={p.name}>
+                    {confirmDelete === p.name ? (
+                      <div
+                        className="flex items-center gap-2 px-3 py-2 rounded text-sm"
+                        style={{ backgroundColor: 'rgba(244,71,71,0.08)', border: '1px solid rgba(244,71,71,0.25)' }}
+                      >
+                        <i className="fa-solid fa-triangle-exclamation" style={{ color: '#f44747', fontSize: 12 }} />
+                        <span style={{ color: '#ccc', flex: 1, fontSize: 12 }}>Delete "{p.name}"?</span>
+                        <button
+                          onClick={() => handleDeleteProject(p.name)}
+                          disabled={deleting === p.name}
+                          className="px-2 py-0.5 rounded text-xs font-medium"
+                          style={{ backgroundColor: '#f44747', color: '#fff', opacity: deleting === p.name ? 0.6 : 1 }}
+                        >
+                          {deleting === p.name ? 'Deleting…' : 'Delete'}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(null)}
+                          className="px-2 py-0.5 rounded text-xs"
+                          style={{ backgroundColor: '#2a2a2a', color: '#888' }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        className="flex items-center gap-2 px-3 py-2 rounded text-sm group"
+                        style={{ backgroundColor: '#0d0d0d', border: '1px solid #1e1e1e' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#1a2a3a'; e.currentTarget.style.borderColor = '#4fc1ff40'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#0d0d0d'; e.currentTarget.style.borderColor = '#1e1e1e'; }}
+                      >
+                        <button
+                          onClick={() => onOpen(p.name)}
+                          className="flex items-center gap-3 flex-1 text-left"
+                          style={{ color: '#ccc', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                        >
+                          <i className="fa-solid fa-folder" style={{ color: '#dcdcaa', fontSize: 13 }} />
+                          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>{p.name}</span>
+                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleSaveToDevice(p.name)}
+                            disabled={saving === p.name}
+                            title="Save to device"
+                            className="px-1.5 py-0.5 rounded transition-colors"
+                            style={{ color: '#555', background: 'none', border: 'none', cursor: saving === p.name ? 'wait' : 'pointer', fontSize: 11 }}
+                            onMouseEnter={(e) => (e.currentTarget.style.color = '#4fc1ff')}
+                            onMouseLeave={(e) => (e.currentTarget.style.color = '#555')}
+                          >
+                            {saving === p.name
+                              ? <i className="fa-solid fa-spinner fa-spin" />
+                              : <i className="fa-solid fa-download" />}
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(p.name)}
+                            title="Delete project"
+                            className="px-1.5 py-0.5 rounded transition-colors"
+                            style={{ color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
+                            onMouseEnter={(e) => (e.currentTarget.style.color = '#f44747')}
+                            onMouseLeave={(e) => (e.currentTarget.style.color = '#555')}
+                          >
+                            <i className="fa-solid fa-trash-can" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

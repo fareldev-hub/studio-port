@@ -100,15 +100,15 @@ function TitleBarButton({ icon, title, onClick, active }: { icon: string; title:
     <button
       onClick={onClick}
       className="p-1.5 rounded transition-colors"
-      style={{ color: active ? '#22c55e' : '#666', backgroundColor: active ? '#0f2210' : 'transparent' }}
+      style={{ color: active ? '#22c55e' : '#666', backgroundColor: 'transparent' }}
       title={title}
       onMouseEnter={(e) => {
         e.currentTarget.style.color = active ? '#4ade80' : '#fff';
-        e.currentTarget.style.backgroundColor = active ? '#14321a' : '#1a1a1a';
+        e.currentTarget.style.backgroundColor = '#1a1a1a';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.color = active ? '#22c55e' : '#666';
-        e.currentTarget.style.backgroundColor = active ? '#0f2210' : 'transparent';
+        e.currentTarget.style.backgroundColor = 'transparent';
       }}
     >
       <i className={`fa-solid ${icon}`} style={{ fontSize: 12 }} />

@@ -68,6 +68,45 @@ app.post('/api/projects', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/api/projects/:name', async (req, res) => {
+  const { name } = req.params;
+  const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const dir = path.join(TERMINAL_BASE, safe);
+  if (!dir.startsWith(TERMINAL_BASE)) return res.status(400).json({ error: 'Invalid project name' });
+  try {
+    await fsp.rm(dir, { recursive: true, force: true });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/projects/:name/export', async (req, res) => {
+  const { name } = req.params;
+  const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const base = path.join(TERMINAL_BASE, safe);
+  if (!base.startsWith(TERMINAL_BASE)) return res.status(400).json({ error: 'Invalid project name' });
+  const files = [];
+  async function collectFiles(dir, prefix) {
+    let items;
+    try { items = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const item of items) {
+      const full = path.join(dir, item.name);
+      const rel = prefix ? `${prefix}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        await collectFiles(full, rel);
+      } else {
+        try {
+          const content = await fsp.readFile(full, 'utf8');
+          files.push({ path: rel, content });
+        } catch { /* skip binary */ }
+      }
+    }
+  }
+  try {
+    await collectFiles(base, '');
+    res.json({ files });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── File listing (recursive) ────────────────────────────────────────────────
 
 async function listDir(dirPath, relativeTo) {
@@ -253,7 +292,8 @@ io.on('connection', (socket) => {
     const safe = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
     const dir = path.join(TERMINAL_BASE, safe);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    ptyProcess.write(`cd "${dir}"\r`);
+    const projectPS1 = `$'\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\]\\[\\e[1;37m\\][ Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal/${safe} \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\\\$ '`;
+    ptyProcess.write(`cd "${dir}" && export PS1=${projectPS1}\r`);
   });
 
   socket.on('terminal:resize', ({ cols, rows }) => {

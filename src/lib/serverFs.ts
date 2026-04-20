@@ -86,4 +86,17 @@ export const serverApi = {
     const d = await r.json();
     return d.count ?? 0;
   },
+
+  async deleteProject(name: string): Promise<boolean> {
+    try {
+      await api(`/api/projects/${encodeURIComponent(name)}`, 'DELETE');
+      return true;
+    } catch { return false; }
+  },
+
+  async exportProject(name: string): Promise<{ path: string; content: string }[]> {
+    const r = await api(`/api/projects/${encodeURIComponent(name)}/export`);
+    const d = await r.json();
+    return d.files ?? [];
+  },
 };
