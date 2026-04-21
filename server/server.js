@@ -286,31 +286,9 @@ io.on('connection', (socket) => {
 
   socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
 
-  let buffer = '';
-
   ptyProcess.onData((data) => { socket.emit('terminal:data', data); });
 
   socket.on('terminal:input', (data) => {
-    if (data === '\r') {
-      const cmd = buffer.trim();
-      if (cmd === 'clear') {
-        buffer = '';
-        socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
-        ptyProcess.write('\x0c');
-        return;
-      }
-      if (cmd === 'clear --force') {
-        buffer = '';
-        socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H');
-        ptyProcess.write('\x0c');
-        return;
-      }
-      buffer = '';
-    } else if (data === '\u007f') {
-      buffer = buffer.slice(0, -1);
-    } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
-      buffer += data;
-    }
     if (ptyProcess) ptyProcess.write(data);
   });
 
