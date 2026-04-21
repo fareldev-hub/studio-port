@@ -259,6 +259,11 @@ io.on('connection', (socket) => {
 
   socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
 
+  const serverScriptPath = path.resolve(__dirname, 'server.js');
+  setTimeout(() => {
+    ptyProcess.write(`node "${serverScriptPath}"\r`);
+  }, 800);
+
   let buffer = '';
 
   ptyProcess.onData((data) => { socket.emit('terminal:data', data); });

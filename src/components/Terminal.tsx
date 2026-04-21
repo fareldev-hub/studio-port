@@ -53,9 +53,6 @@ const TerminalInstance = forwardRef<TerminalInstanceHandle, TerminalInstanceProp
     const resizeObserverRef = useRef<ResizeObserver | null>(null);
     const hasReceivedBannerRef = useRef(false);
     const detectedPortsRef = useRef<Set<number>>(new Set());
-    const folderSentRef = useRef<string | undefined>(undefined);
-    const folderNameRef = useRef<string | undefined>(folderName);
-    useEffect(() => { folderNameRef.current = folderName; }, [folderName]);
 
     const resizeTerminal = useCallback(() => {
       if (!fitAddonRef.current || !xtermRef.current) return;
@@ -96,16 +93,6 @@ const TerminalInstance = forwardRef<TerminalInstanceHandle, TerminalInstanceProp
             if (socket.readyState === WebSocket.OPEN) socket.send('3');
           }, 25000);
           setTimeout(resizeTerminal, 100);
-          // Send folder if already known on connect
-          if (folderNameRef.current) {
-            setTimeout(() => {
-              if (socket.readyState === WebSocket.OPEN) {
-                const fn = folderNameRef.current;
-                folderSentRef.current = fn;
-                socket.send(`42["terminal:set-folder",${JSON.stringify(fn)}]`);
-              }
-            }, 600);
-          }
           return;
         }
         if (data.startsWith('42')) {
@@ -215,16 +202,6 @@ const TerminalInstance = forwardRef<TerminalInstanceHandle, TerminalInstanceProp
       }
     }, [isActive, resizeTerminal]);
 
-    useEffect(() => {
-      if (folderName && folderName !== folderSentRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
-        folderSentRef.current = folderName;
-        setTimeout(() => {
-          if (socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(`42["terminal:set-folder",${JSON.stringify(folderName)}]`);
-          }
-        }, 600);
-      }
-    }, [folderName]);
 
     useImperativeHandle(ref, () => ({
       sendInput: (data: string) => {
