@@ -249,26 +249,11 @@ io.on('connection', (socket) => {
 
   const customPS1 = `\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\]\\[\\e[1;37m\\][ Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\$ `;
 
-  const ptyProcess = pty.spawn(SHELL, ['--norc', '--noprofile', '-i'], {
-    name: 'xterm-256color',
-    cols: 90,
-    rows: 30,
-    cwd: TERMINAL_BASE,
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      PS1: customPS1,
-      THEPORT_BASE: TERMINAL_BASE,
-    }
-  });
-
-  socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
-
-  // Inject restricted cd function so users cannot navigate outside TERMINAL_BASE
+  // Build init file BEFORE spawning so bash reads it silently via --init-file (no echo)
   const initFile = path.join(os.tmpdir(), `theport_init_${Date.now()}.sh`);
   const initScript = [
     `export THEPORT_BASE="${TERMINAL_BASE}"`,
+    `export PS1='${customPS1}'`,
     `cd() {`,
     `  local target`,
     `  if [ $# -eq 0 ]; then`,
@@ -284,9 +269,21 @@ io.on('connection', (socket) => {
     `rm -f "${initFile}"`,
   ].join('\n');
   fs.writeFileSync(initFile, initScript);
-  setTimeout(() => {
-    ptyProcess.write(`source "${initFile}" > /dev/null 2>&1\r`);
-  }, 200);
+
+  const ptyProcess = pty.spawn(SHELL, ['--noprofile', '-i', '--init-file', initFile], {
+    name: 'xterm-256color',
+    cols: 90,
+    rows: 30,
+    cwd: TERMINAL_BASE,
+    env: {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      THEPORT_BASE: TERMINAL_BASE,
+    }
+  });
+
+  socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
 
   let buffer = '';
 
