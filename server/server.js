@@ -254,15 +254,39 @@ io.on('connection', (socket) => {
     cols: 90,
     rows: 30,
     cwd: TERMINAL_BASE,
-    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', PS1: customPS1 }
+    env: {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      PS1: customPS1,
+      THEPORT_BASE: TERMINAL_BASE,
+    }
   });
 
   socket.emit('terminal:data', '\x1b[2J\x1b[3J\x1b[H' + generateBanner());
 
-  const serverScriptPath = path.resolve(__dirname, 'server.js');
+  // Inject restricted cd function so users cannot navigate outside TERMINAL_BASE
+  const initFile = path.join(os.tmpdir(), `theport_init_${Date.now()}.sh`);
+  const initScript = [
+    `export THEPORT_BASE="${TERMINAL_BASE}"`,
+    `cd() {`,
+    `  local target`,
+    `  if [ $# -eq 0 ]; then`,
+    `    builtin cd "$THEPORT_BASE" 2>/dev/null; return`,
+    `  fi`,
+    `  target=$(realpath -m "$1" 2>/dev/null)`,
+    `  if [[ "$target" != "$THEPORT_BASE"* ]]; then`,
+    `    echo "bash: cd: $1: No such file or directory"; return 1`,
+    `  fi`,
+    `  builtin cd "$target"`,
+    `}`,
+    `export -f cd`,
+    `rm -f "${initFile}"`,
+  ].join('\n');
+  fs.writeFileSync(initFile, initScript);
   setTimeout(() => {
-    ptyProcess.write(`node "${serverScriptPath}"\r`);
-  }, 800);
+    ptyProcess.write(`source "${initFile}" > /dev/null 2>&1\r`);
+  }, 200);
 
   let buffer = '';
 
