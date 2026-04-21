@@ -1,12 +1,12 @@
-const express = require('express');
+const express = require('../express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const os = require('os');
-const pty = require('node-pty');
+const os = require('../os');
+const pty = require('../node-pty');
 const fs = require('fs');
-const fsp = require('fs/promises');
-const figlet = require('figlet');
+const fsp = require('../fs/promises');
+const figlet = require('../figlet');
 
 function generateBanner() {
   const logo = figlet.textSync('ThePort', {
@@ -45,8 +45,6 @@ function safePath(project, relPath) {
   return full;
 }
 
-// ─── Projects ───────────────────────────────────────────────────────────────
-
 app.get('/api/projects', async (req, res) => {
   try {
     const items = await fsp.readdir(TERMINAL_BASE, { withFileTypes: true });
@@ -60,7 +58,7 @@ app.get('/api/projects', async (req, res) => {
 app.post('/api/projects', async (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
-  const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const safe = name.replace(/[^a-zA-Z0-9_\-\. ]/g, '_');
   const dir = path.join(TERMINAL_BASE, safe);
   try {
     await fsp.mkdir(dir, { recursive: true });
@@ -70,7 +68,7 @@ app.post('/api/projects', async (req, res) => {
 
 app.delete('/api/projects/:name', async (req, res) => {
   const { name } = req.params;
-  const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const safe = name.replace(/[^a-zA-Z0-9_\-\. ]/g, '_');
   const dir = path.join(TERMINAL_BASE, safe);
   if (!dir.startsWith(TERMINAL_BASE)) return res.status(400).json({ error: 'Invalid project name' });
   try {
@@ -81,7 +79,7 @@ app.delete('/api/projects/:name', async (req, res) => {
 
 app.get('/api/projects/:name/export', async (req, res) => {
   const { name } = req.params;
-  const safe = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const safe = name.replace(/[^a-zA-Z0-9_\-\. ]/g, '_');
   const base = path.join(TERMINAL_BASE, safe);
   if (!base.startsWith(TERMINAL_BASE)) return res.status(400).json({ error: 'Invalid project name' });
   const files = [];
@@ -97,7 +95,7 @@ app.get('/api/projects/:name/export', async (req, res) => {
         try {
           const content = await fsp.readFile(full, 'utf8');
           files.push({ path: rel, content });
-        } catch { /* skip binary */ }
+        } catch {  }
       }
     }
   }
@@ -106,8 +104,6 @@ app.get('/api/projects/:name/export', async (req, res) => {
     res.json({ files });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-// ─── File listing (recursive) ────────────────────────────────────────────────
 
 async function listDir(dirPath, relativeTo) {
   const entries = [];
@@ -141,8 +137,6 @@ app.get('/api/files/:project/list', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Read file ───────────────────────────────────────────────────────────────
-
 app.get('/api/files/:project/read', async (req, res) => {
   const { project } = req.params;
   const rel = req.query.path || '';
@@ -152,8 +146,6 @@ app.get('/api/files/:project/read', async (req, res) => {
     res.type('text/plain').send(content);
   } catch (e) { res.status(404).json({ error: e.message }); }
 });
-
-// ─── Write file ──────────────────────────────────────────────────────────────
 
 app.put('/api/files/:project/write', async (req, res) => {
   const { project } = req.params;
@@ -165,8 +157,6 @@ app.put('/api/files/:project/write', async (req, res) => {
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-// ─── Create file/directory ───────────────────────────────────────────────────
 
 app.post('/api/files/:project/create', async (req, res) => {
   const { project } = req.params;
@@ -183,8 +173,6 @@ app.post('/api/files/:project/create', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Delete ──────────────────────────────────────────────────────────────────
-
 app.delete('/api/files/:project/delete', async (req, res) => {
   const { project } = req.params;
   const rel = req.query.path || '';
@@ -194,8 +182,6 @@ app.delete('/api/files/:project/delete', async (req, res) => {
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-// ─── Rename ──────────────────────────────────────────────────────────────────
 
 app.post('/api/files/:project/rename', async (req, res) => {
   const { project } = req.params;
@@ -208,11 +194,9 @@ app.post('/api/files/:project/rename', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Bulk upload ─────────────────────────────────────────────────────────────
-
 app.post('/api/files/:project/upload', async (req, res) => {
   const { project } = req.params;
-  const { files } = req.body; // [{path, content}]
+  const { files } = req.body;
   if (!Array.isArray(files)) return res.status(400).json({ error: 'files array required' });
   try {
     const base = path.join(TERMINAL_BASE, project);
@@ -228,12 +212,10 @@ app.post('/api/files/:project/upload', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Terminal directory helper ────────────────────────────────────────────────
-
 app.post('/api/terminal/create-dir', (req, res) => {
   const { folderName } = req.body;
   if (!folderName) return res.status(400).json({ error: 'folderName required' });
-  const safe = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+  const safe = folderName.replace(/[^a-zA-Z0-9_\-\. ]/g, '_');
   const dir = path.join(TERMINAL_BASE, safe);
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -241,20 +223,20 @@ app.post('/api/terminal/create-dir', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Socket.IO / Terminal ────────────────────────────────────────────────────
-
 io.on('connection', (socket) => {
   const rawIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || '127.0.0.1';
   const clientIP = rawIP.split(',')[0].trim();
 
-  const customPS1 = `\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\]\\[\\e[1;37m\\][ Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\$ `;
+  function buildPS1(folder) {
+    const folderPart = folder ? `/${folder}` : '';
+    return `\[\e[36m\]╭┈┈┈┈┈┈\[\e[0m\]\[\e[1;37m\][ Ubuntu \[\e[32m\]${clientIP}\[\e[37m\] ]\n\[\e[36m\]╰─∘\[\e[0m\] terminal${folderPart} \[\e[33m\]@${clientIP}\[\e[0m\] \$ `;
+  }
 
-  // Create a temp HOME so bash reads .bashrc silently on startup (no echo)
   const tmpHome = path.join(os.tmpdir(), `theport_home_${Date.now()}`);
   fs.mkdirSync(tmpHome, { recursive: true });
   const bashrc = [
     `export THEPORT_BASE="${TERMINAL_BASE}"`,
-    `export PS1='${customPS1}'`,
+    `export PS1='${buildPS1()}'`,
     `cd() {`,
     `  local target`,
     `  if [ $# -eq 0 ]; then`,
@@ -294,11 +276,10 @@ io.on('connection', (socket) => {
 
   socket.on('terminal:set-folder', (folderName) => {
     if (!folderName || typeof folderName !== 'string') return;
-    const safe = folderName.replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+    const safe = folderName.replace(/[^a-zA-Z0-9_\-\. ]/g, '_');
     const dir = path.join(TERMINAL_BASE, safe);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const projectPS1 = `$'\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\]\\[\\e[1;37m\\][ Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal/${safe} \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\\\$ '`;
-    ptyProcess.write(`cd "${dir}" && export PS1=${projectPS1}\r`);
+    ptyProcess.write(`cd "${dir}" && export PS1='${buildPS1(safe)}'\r`);
   });
 
   socket.on('terminal:resize', ({ cols, rows }) => {

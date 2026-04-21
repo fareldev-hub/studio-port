@@ -24,7 +24,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm install && npm run dev"
+args = "npm install && npm run dev && npm install"
 
 [workflows.workflow.metadata]
 outputType = "webview"
