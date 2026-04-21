@@ -249,9 +249,10 @@ io.on('connection', (socket) => {
 
   const customPS1 = `\\[\\e[36m\\]╭┈┈┈┈┈┈\\[\\e[0m\\]\\[\\e[1;37m\\][ Ubuntu \\[\\e[32m\\]${clientIP}\\[\\e[37m\\] ]\\n\\[\\e[36m\\]╰─∘\\[\\e[0m\\] terminal \\[\\e[33m\\]@${clientIP}\\[\\e[0m\\] \\$ `;
 
-  // Build init file BEFORE spawning so bash reads it silently via --init-file (no echo)
-  const initFile = path.join(os.tmpdir(), `theport_init_${Date.now()}.sh`);
-  const initScript = [
+  // Create a temp HOME so bash reads .bashrc silently on startup (no echo)
+  const tmpHome = path.join(os.tmpdir(), `theport_home_${Date.now()}`);
+  fs.mkdirSync(tmpHome, { recursive: true });
+  const bashrc = [
     `export THEPORT_BASE="${TERMINAL_BASE}"`,
     `export PS1='${customPS1}'`,
     `cd() {`,
@@ -266,11 +267,10 @@ io.on('connection', (socket) => {
     `  builtin cd "$target"`,
     `}`,
     `export -f cd`,
-    `rm -f "${initFile}"`,
   ].join('\n');
-  fs.writeFileSync(initFile, initScript);
+  fs.writeFileSync(path.join(tmpHome, '.bashrc'), bashrc);
 
-  const ptyProcess = pty.spawn(SHELL, ['--noprofile', '-i', '--init-file', initFile], {
+  const ptyProcess = pty.spawn(SHELL, ['--noprofile', '-i'], {
     name: 'xterm-256color',
     cols: 90,
     rows: 30,
@@ -280,6 +280,7 @@ io.on('connection', (socket) => {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       THEPORT_BASE: TERMINAL_BASE,
+      HOME: tmpHome,
     }
   });
 
@@ -328,6 +329,7 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     try { ptyProcess.kill(); } catch (_) {}
+    try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch (_) {}
   });
 });
 
